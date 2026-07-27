@@ -55,6 +55,12 @@
       "skillPath": "skills/aso/SKILL.md",
       "computedHash": "f84a1fb5cb1a8a7f7171bd60ae6850f24a82fa6af94bd5f12e5b3e9227480a34"
     },
+    "audit-xls": {
+      "source": "anthropics/financial-services-plugins",
+      "sourceType": "github",
+      "skillPath": "plugins/vertical-plugins/financial-analysis/skills/audit-xls/SKILL.md",
+      "computedHash": "890ac2385d133a0fe7f11bf7dc0b6ebe4a844fdbe2eccdecb1d863b298517584"
+    },
     "banner-design": {
       "source": "nextlevelbuilder/ui-ux-pro-max-skill",
       "sourceType": "github",
