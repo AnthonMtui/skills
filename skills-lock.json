@@ -589,6 +589,12 @@
       "skillPath": "skills/public-relations/SKILL.md",
       "computedHash": "1b13653b478b49049e4df4981ea032de63833387c4f914eadaeb070f6ecbdc5c"
     },
+    "reconciliation": {
+      "source": "anthropics/knowledge-work-plugins",
+      "sourceType": "github",
+      "skillPath": "finance/skills/reconciliation/SKILL.md",
+      "computedHash": "554678d84090b2435035a2a2a714d7da691f2752abbbddce3f01b8f6d1ed941e"
+    },
     "refactoring-patterns": {
       "source": "wondelai/skills",
       "sourceType": "github",
