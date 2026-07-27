@@ -553,6 +553,12 @@
       "skillPath": "skills/marketing-psychology/SKILL.md",
       "computedHash": "50d735eb0f5c36f379ed2200f21aeacc9b9ad85667b5d33ec6111857352a1340"
     },
+    "markitdown": {
+      "source": "pur3v4d3r/pur3-pkb-codebase",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/__scientific-skills/markitdown/SKILL.md",
+      "computedHash": "eb98e531475df1766146377f04940da1b950ebef1b3fd097f57e79fdc0d14d2d"
+    },
     "microinteractions": {
       "source": "wondelai/skills",
       "sourceType": "github",
