@@ -61,6 +61,12 @@
       "skillPath": "plugins/vertical-plugins/financial-analysis/skills/audit-xls/SKILL.md",
       "computedHash": "890ac2385d133a0fe7f11bf7dc0b6ebe4a844fdbe2eccdecb1d863b298517584"
     },
+    "bank-reconciliation": {
+      "source": "gokulb20/crewm8-cfo-skills",
+      "sourceType": "github",
+      "skillPath": "skills/cash-treasury/bank-reconciliation/SKILL.md",
+      "computedHash": "46477fae1efdbd1cbc401ada3bc8faec0657ec6bcb54060d0220b081bff1c7d1"
+    },
     "banner-design": {
       "source": "nextlevelbuilder/ui-ux-pro-max-skill",
       "sourceType": "github",
