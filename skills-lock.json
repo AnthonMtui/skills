@@ -493,6 +493,12 @@
       "skillPath": "monetizing-innovation/SKILL.md",
       "computedHash": "3b4c175b358fa73013bfa3f85cd66835861f8394c25ae97b4448f3f1d2ecb6e7"
     },
+    "month-end-close": {
+      "source": "openaccountant/skills",
+      "sourceType": "github",
+      "skillPath": "business/month-end-close/SKILL.md",
+      "computedHash": "09956f06828f4db46cb643047f0b3e7227945b54d538514bc57c49456483ea50"
+    },
     "negotiation": {
       "source": "wondelai/skills",
       "sourceType": "github",
