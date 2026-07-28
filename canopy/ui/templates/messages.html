@@ -1,0 +1,3472 @@
+{% extends "base.html" %}
+{% from "_messages_macros.html" import avatar_badge, avatar_stack, render_dm_attachment with context %}
+
+{% block title %}Messages - Canopy{% endblock %}
+
+{% block extra_css %}
+<style>
+    .messages-page {
+        --dm-sidebar-width: clamp(224px, 22vw, 286px);
+        --dm-sidebar-gap: 0.8rem;
+        --dm-panel-radius: 22px;
+        --dm-avatar-radius: 14px;
+        --dm-avatar-radius-tight: 12px;
+        --dm-thread-padding-x: 0.95rem;
+        --dm-thread-padding-y: 0.85rem;
+        --dm-bubble-max-width: min(84%, 920px);
+        --dm-composer-min-height: 88px;
+    }
+
+    .messages-page {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        gap: 0.75rem;
+        min-height: calc(100vh - 128px);
+        height: calc(100vh - 128px);
+    }
+
+    @supports (height: 100dvh) {
+        .messages-page {
+            min-height: calc(100dvh - 128px);
+            height: calc(100dvh - 128px);
+        }
+    }
+
+    .messages-topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        padding-inline: 0.15rem;
+    }
+
+    .messages-topbar-copy h1 {
+        font-size: 1.32rem;
+        margin: 0;
+        letter-spacing: -0.02em;
+    }
+
+    .messages-topbar-copy p {
+        margin: 0.08rem 0 0;
+        color: var(--canopy-text-secondary);
+        font-size: 0.9rem;
+    }
+
+    .messages-topbar-actions {
+        display: flex;
+        gap: 0.45rem;
+        flex-wrap: wrap;
+    }
+
+    .messages-topbar-actions .btn {
+        min-height: 2.2rem;
+        border-radius: 999px;
+    }
+
+    .messages-shell {
+        display: grid;
+        grid-template-columns: minmax(0, var(--dm-sidebar-width)) minmax(0, 1fr);
+        gap: var(--dm-sidebar-gap);
+        min-height: 0;
+        height: 100%;
+        align-items: stretch;
+        position: relative;
+    }
+
+    .dm-sidebar,
+    .dm-thread-pane {
+        background: linear-gradient(180deg, rgba(17, 27, 44, 0.96), rgba(10, 19, 34, 0.94));
+        border: 1px solid rgba(110, 148, 255, 0.16);
+        border-radius: var(--dm-panel-radius);
+        box-shadow: 0 20px 48px rgba(3, 10, 22, 0.28);
+        min-width: 0;
+        min-height: 0;
+    }
+
+    .dm-sidebar {
+        padding: 0.82rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.7rem;
+        overflow: hidden;
+        background: linear-gradient(180deg, rgba(14, 24, 39, 0.96), rgba(9, 17, 29, 0.96));
+    }
+
+    .dm-sidebar-mobile-header,
+    .dm-mobile-sidebar-backdrop,
+    .dm-mobile-sidebar-toggle {
+        display: none;
+    }
+
+    .dm-sidebar-mobile-header {
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding-bottom: 0.25rem;
+    }
+
+    .dm-sidebar-mobile-header strong {
+        display: block;
+        font-size: 0.9rem;
+        letter-spacing: -0.01em;
+    }
+
+    .dm-sidebar-mobile-header small {
+        color: var(--canopy-text-secondary);
+        font-size: 0.75rem;
+    }
+
+    .dm-sidebar-search {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: transparent;
+    }
+
+    .dm-search-input-wrap {
+        position: relative;
+    }
+
+    .dm-search-input-wrap .form-control {
+        padding-left: 2.5rem;
+        border-radius: 15px;
+        min-height: 42px;
+    }
+
+    .dm-search-input-wrap i {
+        position: absolute;
+        left: 0.95rem;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--canopy-text-secondary);
+    }
+
+    .dm-sidebar-scroll {
+        flex: 1 1 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 0.78rem;
+        overflow-y: auto;
+        min-height: 0;
+        padding-right: 0.15rem;
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable;
+    }
+
+    .dm-section-label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 0.78rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--canopy-text-secondary);
+        margin-bottom: 0.34rem;
+        font-weight: 700;
+    }
+
+    .dm-conversation-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.34rem;
+    }
+
+    .dm-conversation-card {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 0.68rem;
+        text-decoration: none;
+        color: var(--canopy-text-primary);
+        padding: 0.62rem 0.72rem;
+        border-radius: 16px;
+        border: 1px solid transparent;
+        background: rgba(255, 255, 255, 0.025);
+        transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+    }
+
+    .dm-conversation-card:hover {
+        border-color: rgba(110, 148, 255, 0.22);
+        background: rgba(110, 148, 255, 0.08);
+        transform: translateY(-1px);
+        color: var(--canopy-text-primary);
+        text-decoration: none;
+    }
+
+    .dm-conversation-card:focus-visible {
+        outline: none;
+        color: var(--canopy-text-primary);
+        text-decoration: none;
+        border-color: rgba(46, 214, 125, 0.34);
+        background: rgba(110, 148, 255, 0.09);
+        box-shadow: 0 0 0 2px rgba(46, 214, 125, 0.2);
+    }
+
+    .dm-conversation-card.active {
+        background: linear-gradient(135deg, rgba(46, 214, 125, 0.16), rgba(62, 118, 255, 0.15));
+        border-color: rgba(46, 214, 125, 0.3);
+    }
+
+    .dm-conversation-main {
+        min-width: 0;
+    }
+
+    .dm-conversation-topline {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 0.65rem;
+        min-width: 0;
+    }
+
+    .dm-conversation-title {
+        font-weight: 700;
+        font-size: 0.93rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .dm-conversation-time {
+        color: var(--canopy-text-secondary);
+        font-size: 0.77rem;
+        white-space: nowrap;
+    }
+
+    .dm-conversation-subtitle,
+    .dm-conversation-preview {
+        color: var(--canopy-text-secondary);
+        font-size: 0.79rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .dm-conversation-subtitle {
+        margin-top: 0.1rem;
+    }
+
+    .dm-conversation-preview {
+        margin-top: 0.28rem;
+    }
+
+    .dm-unread-pill {
+        min-width: 1.5rem;
+        height: 1.5rem;
+        padding: 0 0.45rem;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        font-weight: 700;
+        background: rgba(46, 214, 125, 0.18);
+        color: #8df3bd;
+        border: 1px solid rgba(46, 214, 125, 0.28);
+    }
+
+    .dm-thread-pane {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    .dm-thread-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 0.78rem var(--dm-thread-padding-x) 0.64rem;
+        border-bottom: 1px solid rgba(110, 148, 255, 0.14);
+        background: linear-gradient(180deg, rgba(18, 30, 50, 0.96), rgba(13, 23, 39, 0.92));
+    }
+
+    .dm-thread-header-main {
+        display: flex;
+        align-items: center;
+        gap: 0.72rem;
+        min-width: 0;
+    }
+
+    .dm-thread-title-wrap {
+        min-width: 0;
+    }
+
+    .dm-thread-title {
+        font-size: 1rem;
+        font-weight: 700;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .dm-thread-subtitle {
+        margin-top: 0.08rem;
+        color: var(--canopy-text-secondary);
+        font-size: 0.8rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .dm-thread-actions {
+        display: flex;
+        gap: 0.4rem;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+
+    .dm-security-pill,
+    .dm-security-chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        box-shadow: 0 8px 18px rgba(3, 10, 22, 0.16);
+        cursor: help;
+    }
+
+    .dm-security-pill {
+        width: 1.85rem;
+        height: 1.85rem;
+        padding: 0;
+        font-size: 0.8rem;
+    }
+
+    .dm-security-chip {
+        width: 1.45rem;
+        height: 1.45rem;
+        padding: 0;
+        font-size: 0.68rem;
+        flex-shrink: 0;
+    }
+
+    .dm-security-pill .security-text,
+    .dm-security-chip .security-text {
+        display: none;
+    }
+
+    .dm-thread-actions .btn {
+        min-height: 1.92rem;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding-inline: 0.72rem;
+    }
+
+    .dm-security-pill.e2e,
+    .dm-security-chip.e2e {
+        color: #78efb6;
+        background: rgba(31, 145, 89, 0.16);
+        border-color: rgba(67, 224, 139, 0.28);
+    }
+
+    .dm-security-pill.local,
+    .dm-security-chip.local {
+        color: #9ec6ff;
+        background: rgba(48, 92, 154, 0.18);
+        border-color: rgba(110, 148, 255, 0.26);
+    }
+
+    .dm-security-pill.warning,
+    .dm-security-chip.warning {
+        color: #f5cc79;
+        background: rgba(142, 99, 20, 0.16);
+        border-color: rgba(255, 197, 79, 0.24);
+    }
+
+    .dm-security-pill.failure,
+    .dm-security-chip.failure {
+        color: #ff9b9b;
+        background: rgba(155, 47, 47, 0.16);
+        border-color: rgba(255, 107, 107, 0.24);
+    }
+
+    .dm-avatar,
+    .dm-avatar-stack-item {
+        flex-shrink: 0;
+    }
+
+    .dm-avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: var(--dm-avatar-radius);
+        overflow: hidden;
+        background: rgba(99, 102, 241, 0.18);
+        border: 1px solid rgba(99, 102, 241, 0.28);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        color: var(--canopy-text-primary);
+        box-shadow: 0 10px 20px rgba(5, 10, 24, 0.18);
+        cursor: pointer;
+    }
+
+    .dm-avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .dm-avatar.stacked {
+        width: 34px;
+        height: 34px;
+        border-width: 2px;
+        border-color: rgba(9, 16, 30, 0.9);
+        border-radius: var(--dm-avatar-radius-tight);
+    }
+
+    .dm-avatar-stack {
+        display: flex;
+        align-items: center;
+    }
+
+    .dm-avatar-stack-item {
+        margin-left: -9px;
+    }
+
+    .dm-avatar-stack-item:first-child {
+        margin-left: 0;
+    }
+
+    .dm-avatar-stack-more {
+        min-width: 32px;
+        height: 32px;
+        border-radius: 12px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.72rem;
+        font-weight: 700;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        color: var(--canopy-text-secondary);
+        margin-left: -8px;
+        padding: 0 0.5rem;
+    }
+
+    .dm-thread-scroll {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        padding: var(--dm-thread-padding-y) var(--dm-thread-padding-x);
+        display: flex;
+        flex-direction: column;
+        gap: 0.72rem;
+        background: radial-gradient(circle at top, rgba(31, 66, 112, 0.18), transparent 45%), linear-gradient(180deg, rgba(13, 23, 39, 0.9), rgba(9, 17, 30, 0.94));
+        isolation: isolate;
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable both-edges;
+    }
+
+    #dm-thread-body {
+        display: flex;
+        flex-direction: column;
+        gap: 0.38rem;
+        min-width: 0;
+    }
+
+    .dm-day-divider {
+        display: flex;
+        justify-content: center;
+        margin: 0.2rem 0;
+    }
+
+    .dm-day-divider span {
+        font-size: 0.74rem;
+        color: var(--canopy-text-secondary);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding: 0.25rem 0.7rem;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .dm-message-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 0.5rem;
+        position: relative;
+        z-index: 0;
+    }
+
+    .dm-message-row.outbound {
+        justify-content: flex-end;
+    }
+
+    .dm-message-row.dropdown-open,
+    .dm-message-row.editing {
+        z-index: 24;
+    }
+
+    .dm-message-avatar-wrap {
+        width: 40px;
+        display: flex;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .dm-message-avatar-wrap.spacer {
+        visibility: hidden;
+    }
+
+    .dm-message-main {
+        min-width: 0;
+        max-width: var(--dm-bubble-max-width);
+        position: relative;
+    }
+
+    .dm-message-row.outbound .dm-message-main {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+    }
+
+    .dm-message-meta {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        margin-bottom: 0.22rem;
+        color: var(--canopy-text-secondary);
+        font-size: 0.75rem;
+    }
+
+    .dm-message-sender {
+        font-weight: 700;
+        color: var(--canopy-text-primary);
+    }
+
+    .dm-bubble-wrap {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.36rem;
+        min-width: 0;
+    }
+
+    .dm-message-row.outbound .dm-bubble-wrap {
+        flex-direction: row-reverse;
+    }
+
+    .dm-message-menu {
+        opacity: 0;
+        transition: opacity 0.16s ease;
+        position: relative;
+        z-index: 3;
+    }
+
+    .dm-message-menu .dropdown-toggle {
+        width: 1.82rem;
+        height: 1.82rem;
+        padding: 0;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.04);
+        border-color: rgba(255, 255, 255, 0.08);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .dm-message-menu .dropdown-toggle::after {
+        display: none;
+    }
+
+    .dm-message-menu .dropdown-toggle:hover,
+    .dm-message-menu .dropdown-toggle:focus {
+        background: rgba(110, 148, 255, 0.12);
+        border-color: rgba(110, 148, 255, 0.22);
+    }
+
+    .dm-message-menu .dropdown-toggle:focus-visible {
+        outline: none;
+        background: rgba(110, 148, 255, 0.12);
+        border-color: rgba(46, 214, 125, 0.3);
+        box-shadow: 0 0 0 2px rgba(46, 214, 125, 0.18);
+    }
+
+    .dm-message-menu .dropdown-menu {
+        min-width: 11rem;
+        padding: 0.38rem;
+        border-radius: 16px;
+        border: 1px solid rgba(110, 148, 255, 0.18);
+        background: rgba(10, 19, 34, 0.98);
+        box-shadow: 0 18px 36px rgba(3, 10, 22, 0.38);
+        z-index: 1085;
+    }
+
+    .dm-message-menu .dropdown-item {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding: 0.55rem 0.72rem;
+        border-radius: 12px;
+        color: var(--canopy-text-primary);
+    }
+
+    .dm-message-menu .dropdown-item:hover,
+    .dm-message-menu .dropdown-item:focus {
+        background: rgba(110, 148, 255, 0.12);
+        color: var(--canopy-text-primary);
+    }
+
+    .dm-message-menu.dropup .dropdown-menu {
+        margin-bottom: 0.4rem;
+    }
+
+    .dm-message-row:hover .dm-message-menu,
+    .dm-message-row .dm-message-menu .show,
+    .dm-message-row .dm-inline-editor {
+        opacity: 1;
+    }
+
+    .dm-bubble {
+        min-width: 0;
+        max-width: 100%;
+        border-radius: 18px;
+        padding: 0.72rem 0.82rem;
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 10px 22px rgba(4, 10, 24, 0.18);
+    }
+
+    .dm-message-row.outbound .dm-bubble {
+        background: linear-gradient(135deg, rgba(39, 211, 118, 0.18), rgba(41, 109, 255, 0.18));
+        border-color: rgba(66, 224, 139, 0.22);
+    }
+
+    .dm-bubble-reply-preview {
+        width: 100%;
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-left: 3px solid rgba(66, 224, 139, 0.55);
+        border-radius: 12px;
+        padding: 0.45rem 0.6rem;
+        margin-bottom: 0.45rem;
+        text-align: left;
+        color: var(--canopy-text-primary);
+    }
+
+    .dm-bubble-reply-preview:hover {
+        background: rgba(255, 255, 255, 0.08);
+    }
+
+    .dm-bubble-reply-preview:focus-visible {
+        outline: none;
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(46, 214, 125, 0.3);
+        box-shadow: 0 0 0 2px rgba(46, 214, 125, 0.16);
+    }
+
+    .dm-bubble-reply-preview strong,
+    .dm-composer-reply strong {
+        display: block;
+        font-size: 0.75rem;
+        color: #8df3bd;
+        margin-bottom: 0.12rem;
+    }
+
+    .dm-bubble-copy {
+        word-break: break-word;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+        line-height: 1.45;
+    }
+
+    .dm-bubble-copy p:last-child {
+        margin-bottom: 0;
+    }
+
+    .dm-bubble-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.4rem;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-top: 0.34rem;
+        color: var(--canopy-text-secondary);
+        font-size: 0.71rem;
+    }
+
+    .dm-attachment-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.55rem;
+        margin-top: 0.65rem;
+    }
+
+    .dm-attachment-list .media-grid {
+        max-width: 100%;
+    }
+
+    .dm-attachment-image img {
+        display: block;
+        width: 100%;
+        max-height: 320px;
+        object-fit: cover;
+        border-radius: 14px;
+        cursor: pointer;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .dm-attachment-meta,
+    .dm-attachment-title-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.7rem;
+        margin-top: 0.4rem;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .dm-attachment-meta small,
+    .dm-attachment-title-row small {
+        display: block;
+        color: var(--canopy-text-secondary);
+        margin-top: 0.12rem;
+    }
+
+    .dm-attachment-card {
+        padding: 0.7rem 0.8rem;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.035);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .dm-attachment-actions,
+    .dm-attachment-badges {
+        display: flex;
+        gap: 0.4rem;
+        flex-wrap: wrap;
+    }
+
+    .dm-empty-state,
+    .dm-search-results {
+        padding: 1rem;
+    }
+
+    .dm-empty-card {
+        padding: 1.3rem;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.035);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: var(--canopy-text-secondary);
+        text-align: center;
+    }
+
+    .dm-search-results {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .dm-search-result-card {
+        display: block;
+        text-decoration: none;
+        color: var(--canopy-text-primary);
+        border-radius: 18px;
+        padding: 0.95rem 1rem;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.035);
+    }
+
+    .dm-search-result-card:hover {
+        text-decoration: none;
+        background: rgba(110, 148, 255, 0.08);
+        border-color: rgba(110, 148, 255, 0.22);
+    }
+
+    .dm-search-result-card:focus-visible {
+        outline: none;
+        text-decoration: none;
+        background: rgba(110, 148, 255, 0.08);
+        border-color: rgba(46, 214, 125, 0.32);
+        box-shadow: 0 0 0 2px rgba(46, 214, 125, 0.18);
+    }
+
+    .dm-search-result-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.6rem;
+        color: var(--canopy-text-secondary);
+        font-size: 0.8rem;
+        margin-bottom: 0.35rem;
+        flex-wrap: wrap;
+    }
+
+    .dm-composer {
+        border-top: 1px solid rgba(110, 148, 255, 0.14);
+        padding: 0.7rem var(--dm-thread-padding-x) 0.82rem;
+        padding-bottom: max(0.82rem, calc(env(safe-area-inset-bottom) + 0.46rem));
+        background: linear-gradient(180deg, rgba(14, 25, 41, 0.98), rgba(10, 20, 34, 0.99));
+        display: flex;
+        flex-direction: column;
+        gap: 0.55rem;
+        flex-shrink: 0;
+        position: sticky;
+        bottom: 0;
+        z-index: 5;
+    }
+
+    .dm-composer.dragover {
+        border-top-color: rgba(46, 214, 125, 0.34);
+        box-shadow: inset 0 0 0 1px rgba(46, 214, 125, 0.18);
+        background: linear-gradient(180deg, rgba(15, 31, 43, 0.98), rgba(11, 25, 37, 0.99));
+    }
+
+    .dm-composer.dragover .dm-composer-input-wrap {
+        border-radius: 18px;
+        box-shadow: 0 0 0 1px rgba(46, 214, 125, 0.24);
+    }
+
+    .dm-composer-topline {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+    }
+
+    .dm-composer-target {
+        display: flex;
+        flex-direction: column;
+        gap: 0.14rem;
+    }
+
+    .dm-composer-target strong {
+        font-size: 0.88rem;
+    }
+
+    .dm-composer-target small {
+        color: var(--canopy-text-secondary);
+    }
+
+    .dm-composer-reply {
+        display: none;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.7rem;
+        border-radius: 14px;
+        padding: 0.52rem 0.68rem;
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .dm-composer-reply.active {
+        display: flex;
+    }
+
+    .recipient-input-wrap {
+        position: relative;
+    }
+
+    .recipient-input {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.4rem;
+        background: var(--canopy-bg-tertiary);
+        border: 1px solid var(--canopy-border);
+        border-radius: 15px;
+        padding: 0.4rem 0.58rem;
+        min-height: 42px;
+    }
+
+    .recipient-input input {
+        border: none;
+        background: transparent;
+        outline: none;
+        flex: 1;
+        min-width: 160px;
+        color: var(--canopy-text-primary);
+        padding: 0.2rem 0;
+        font-size: 0.95rem;
+    }
+
+    .recipient-input input::placeholder {
+        color: var(--canopy-text-secondary);
+    }
+
+    .recipient-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        border-radius: 999px;
+        padding: 0.2rem 0.55rem;
+        font-size: 0.8rem;
+        background: rgba(99, 102, 241, 0.15);
+        border: 1px solid rgba(99, 102, 241, 0.35);
+        color: var(--canopy-text-primary);
+    }
+
+    .recipient-chip.unknown {
+        background: rgba(148, 163, 184, 0.14);
+        border-color: rgba(148, 163, 184, 0.35);
+    }
+
+    .recipient-chip-id {
+        font-size: 0.72rem;
+        color: var(--canopy-text-secondary);
+    }
+
+    .recipient-chip button {
+        border: none;
+        background: transparent;
+        color: var(--canopy-text-secondary);
+        font-size: 0.95rem;
+        line-height: 1;
+        padding: 0;
+    }
+
+    .recipient-suggestions {
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 0;
+        right: 0;
+        background: var(--canopy-bg-card);
+        border: 1px solid var(--canopy-border);
+        border-radius: 12px;
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+        max-height: 240px;
+        overflow-y: auto;
+        z-index: 1050;
+        display: none;
+    }
+
+    .recipient-suggestion-item {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.55rem 0.75rem;
+        cursor: pointer;
+    }
+
+    .recipient-suggestion-item:hover,
+    .recipient-suggestion-item.active {
+        background: var(--canopy-bg-tertiary);
+    }
+
+    .recipient-suggestion-avatar {
+        width: 34px;
+        height: 34px;
+        border-radius: 12px;
+        overflow: hidden;
+        flex-shrink: 0;
+        background: rgba(99, 102, 241, 0.15);
+        border: 1px solid rgba(99, 102, 241, 0.3);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--canopy-text-primary);
+        font-weight: 600;
+        font-size: 0.8rem;
+    }
+
+    .recipient-suggestion-avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .recipient-suggestion-name {
+        font-weight: 600;
+        color: var(--canopy-text-primary);
+    }
+
+    .recipient-suggestion-id {
+        font-size: 0.75rem;
+        color: var(--canopy-text-secondary);
+    }
+
+    .recipient-suggestion-state {
+        padding: 0.75rem 0.85rem;
+        color: var(--canopy-text-secondary);
+        font-size: 0.82rem;
+    }
+
+    .dm-composer-input-wrap {
+        position: relative;
+    }
+
+    .dm-composer-input-wrap:focus-within {
+        border-radius: 16px;
+        box-shadow: 0 0 0 2px rgba(46, 214, 125, 0.16);
+    }
+
+    .dm-thread-inline-notice {
+        position: sticky;
+        bottom: 0.75rem;
+        margin: 0 auto;
+        z-index: 9;
+        box-shadow: 0 16px 32px rgba(5, 10, 24, 0.28);
+    }
+
+    .dm-composer-textarea {
+        min-height: var(--dm-composer-min-height);
+        max-height: 220px;
+        resize: vertical;
+        border-radius: 16px;
+        padding: 0.76rem 0.9rem;
+    }
+
+    .dm-composer-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+    }
+
+    .dm-composer-actions-left,
+    .dm-composer-actions-right {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        flex-wrap: wrap;
+    }
+
+    .file-preview-item {
+        background: var(--canopy-bg-tertiary);
+        border: 1px solid var(--canopy-border);
+    }
+
+    .dm-inline-editor {
+        width: 100%;
+        margin-top: 0.48rem;
+        padding: 0.68rem;
+        border-radius: 16px;
+        border: 1px solid rgba(110, 148, 255, 0.18);
+        background: rgba(9, 18, 31, 0.88);
+        box-shadow: 0 14px 28px rgba(3, 10, 22, 0.24);
+    }
+
+    .dm-inline-editor .form-control {
+        min-height: 96px;
+        border-radius: 14px;
+        padding: 0.74rem 0.84rem;
+    }
+
+    .dm-inline-toolbar {
+        margin-top: 0.55rem;
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+
+    .flash-focus {
+        animation: dmFlashFocus 1.3s ease;
+    }
+
+    @keyframes dmFlashFocus {
+        0% { box-shadow: 0 0 0 0 rgba(66, 224, 139, 0.45); }
+        100% { box-shadow: 0 0 0 22px rgba(66, 224, 139, 0); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .dm-conversation-card,
+        .dm-message-menu,
+        .dm-message-menu .dropdown-toggle,
+        .dm-search-result-card,
+        .flash-focus {
+            animation: none !important;
+            transition: none !important;
+        }
+
+        .dm-conversation-card:hover {
+            transform: none;
+        }
+    }
+
+    @media (max-width: 991.98px) {
+        .messages-page {
+            --dm-sidebar-width: 100%;
+            --dm-thread-padding-x: 0.9rem;
+            --dm-thread-padding-y: 0.8rem;
+            --dm-bubble-max-width: 100%;
+            --dm-composer-min-height: 82px;
+        }
+
+        .messages-page {
+            gap: 0.85rem;
+        }
+
+        .messages-shell {
+            grid-template-columns: 1fr;
+            grid-template-rows: minmax(150px, 26vh) minmax(0, 1fr);
+            gap: 0.72rem;
+        }
+
+        .dm-sidebar {
+            max-height: none;
+        }
+
+        .dm-thread-scroll {
+            min-height: 46vh;
+        }
+
+        .dm-thread-header,
+        .dm-composer {
+            padding-left: 0.9rem;
+            padding-right: 0.9rem;
+        }
+    }
+
+    @media (max-width: 767.98px) {
+        .messages-page {
+            --dm-panel-radius: 18px;
+            --dm-avatar-radius: 12px;
+            --dm-avatar-radius-tight: 10px;
+            --dm-thread-padding-x: 0.78rem;
+            --dm-thread-padding-y: 0.72rem;
+            --dm-composer-min-height: 76px;
+        }
+
+        .messages-page {
+            gap: 0.62rem;
+        }
+
+        .messages-topbar {
+            gap: 0.7rem;
+        }
+
+        .messages-page {
+            min-height: calc(100vh - 108px);
+            height: calc(100vh - 108px);
+        }
+
+        @supports (height: 100dvh) {
+            .messages-page {
+                min-height: calc(100dvh - 108px);
+                height: calc(100dvh - 108px);
+            }
+        }
+
+        .messages-topbar-copy h1 {
+            font-size: 1.08rem;
+        }
+
+        .messages-topbar-copy p {
+            display: none;
+        }
+
+        .messages-topbar-actions {
+            width: 100%;
+        }
+
+        .messages-topbar-actions .btn {
+            flex: 1 1 calc(50% - 0.25rem);
+            justify-content: center;
+            min-height: 42px;
+        }
+
+        .messages-page.has-active-thread {
+            gap: 0;
+        }
+
+        .messages-page.has-active-thread .messages-topbar {
+            display: none;
+        }
+
+        .messages-page.has-active-thread .messages-shell {
+            grid-template-rows: minmax(0, 1fr);
+            gap: 0;
+            overflow: hidden;
+        }
+
+        .dm-thread-header,
+        .dm-thread-scroll,
+        .dm-composer,
+        .dm-sidebar {
+            padding-left: 0.8rem;
+            padding-right: 0.8rem;
+        }
+
+        .dm-sidebar {
+            padding-top: 0.68rem;
+            padding-bottom: 0.68rem;
+            max-height: 23vh;
+            border-radius: 18px;
+        }
+
+        .messages-page.has-active-thread .dm-sidebar {
+            position: absolute;
+            inset: 0 auto 0 0;
+            width: min(88vw, 340px);
+            max-width: calc(100% - 2.5rem);
+            height: 100%;
+            max-height: none;
+            z-index: 30;
+            padding-top: 0.78rem;
+            padding-bottom: 0.78rem;
+            box-shadow: 0 22px 48px rgba(3, 10, 22, 0.36);
+            transform: translateX(calc(-100% - 1rem));
+            opacity: 0;
+            pointer-events: none;
+            transition: transform 0.22s ease, opacity 0.18s ease;
+        }
+
+        .messages-page.has-active-thread.dm-mobile-sidebar-open .dm-sidebar {
+            transform: translateX(0);
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .messages-page.has-active-thread .dm-sidebar-mobile-header {
+            display: flex;
+        }
+
+        .messages-page.has-active-thread .dm-sidebar-search {
+            position: static;
+        }
+
+        .messages-page.has-active-thread .dm-mobile-sidebar-backdrop {
+            display: block;
+            position: absolute;
+            inset: 0;
+            z-index: 20;
+            border: 0;
+            padding: 0;
+            background: rgba(3, 10, 22, 0.52);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.18s ease;
+        }
+
+        .messages-page.has-active-thread.dm-mobile-sidebar-open .dm-mobile-sidebar-backdrop {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .dm-sidebar-scroll {
+            gap: 0.85rem;
+        }
+
+        .dm-section-label {
+            font-size: 0.72rem;
+            margin-bottom: 0.3rem;
+        }
+
+        .dm-conversation-card {
+            gap: 0.55rem;
+            padding: 0.58rem 0.62rem;
+            border-radius: 14px;
+        }
+
+        .dm-conversation-title {
+            font-size: 0.86rem;
+        }
+
+        .dm-conversation-time {
+            font-size: 0.72rem;
+        }
+
+        .dm-conversation-subtitle {
+            display: none;
+        }
+
+        .dm-conversation-preview {
+            margin-top: 0.14rem;
+            font-size: 0.78rem;
+        }
+
+        .dm-thread-header {
+            align-items: flex-start;
+            gap: 0.5rem;
+            padding-top: 0.68rem;
+            padding-bottom: 0.58rem;
+        }
+
+        .dm-thread-header-main {
+            gap: 0.7rem;
+        }
+
+        .dm-thread-title {
+            font-size: 0.92rem;
+        }
+
+        .dm-thread-subtitle {
+            margin-top: 0.05rem;
+            font-size: 0.78rem;
+        }
+
+        .dm-thread-actions {
+            gap: 0.3rem;
+            width: 100%;
+            justify-content: flex-end;
+        }
+
+        .messages-page.has-active-thread .dm-thread-actions {
+            width: auto;
+            margin-left: auto;
+            flex-wrap: nowrap;
+        }
+
+        .messages-page.has-active-thread .dm-mobile-sidebar-toggle {
+            display: inline-flex;
+        }
+
+        .dm-thread-actions .btn {
+            padding: 0.32rem 0.6rem;
+        }
+
+        .dm-security-pill {
+            width: 1.68rem;
+            height: 1.68rem;
+            font-size: 0.72rem;
+        }
+
+        .dm-message-main {
+            max-width: 100%;
+        }
+
+        .dm-thread-scroll {
+            padding-top: 0.68rem;
+            padding-bottom: 0.68rem;
+            gap: 0.64rem;
+            min-height: 42vh;
+        }
+
+        .dm-message-row {
+            gap: 0.38rem;
+        }
+
+        .dm-message-avatar-wrap {
+            width: 32px;
+        }
+
+        .dm-avatar {
+            width: 32px;
+            height: 32px;
+            font-size: 0.78rem;
+        }
+
+        .dm-avatar.stacked {
+            width: 29px;
+            height: 29px;
+        }
+
+        .dm-bubble {
+            padding: 0.64rem 0.72rem;
+            border-radius: 16px;
+        }
+
+        .dm-bubble-footer {
+            margin-top: 0.35rem;
+            font-size: 0.71rem;
+        }
+
+        .dm-message-menu {
+            opacity: 1;
+        }
+
+        .dm-message-menu .dropdown-toggle {
+            width: 1.76rem;
+            height: 1.76rem;
+        }
+
+        .dm-composer {
+            padding-top: 0.62rem;
+            padding-bottom: 0.72rem;
+            gap: 0.5rem;
+        }
+
+        .messages-page.has-active-thread #dm-composer:not(.dm-composer-recipient-mode) .dm-composer-topline {
+            display: none;
+        }
+
+        .dm-composer-topline {
+            gap: 0.55rem;
+        }
+
+        .dm-composer-target strong {
+            font-size: 0.84rem;
+        }
+
+        .dm-composer-target small {
+            font-size: 0.74rem;
+        }
+
+        .dm-composer-reply {
+            padding: 0.5rem 0.6rem;
+            align-items: flex-start;
+        }
+
+        .recipient-input {
+            min-height: 40px;
+            padding: 0.34rem 0.5rem;
+        }
+
+        .recipient-input input {
+            min-width: 120px;
+            font-size: 0.9rem;
+        }
+
+        .dm-composer-textarea {
+            min-height: 76px;
+            max-height: 176px;
+            padding: 0.72rem 0.8rem;
+            font-size: 16px;
+        }
+
+        .dm-composer-actions {
+            gap: 0.55rem;
+        }
+
+        .dm-composer-actions-left,
+        .dm-composer-actions-right {
+            width: 100%;
+        }
+
+        .dm-composer-actions-left {
+            gap: 0.45rem;
+        }
+
+        .dm-composer-actions-left .text-muted {
+            flex: 1 1 100%;
+            font-size: 0.72rem;
+        }
+
+        .messages-page.has-active-thread #dm-composer:not(.dm-composer-recipient-mode) .dm-composer-actions-left .text-muted {
+            display: none;
+        }
+
+        .dm-composer-actions-right {
+            justify-content: flex-end;
+        }
+    }
+
+    @media (max-width: 575.98px) {
+        .messages-page {
+            --dm-composer-min-height: 72px;
+        }
+
+        .messages-topbar-copy p {
+            display: none;
+        }
+
+        .messages-topbar-actions .btn {
+            font-size: 0.82rem;
+            padding-left: 0.6rem;
+            padding-right: 0.6rem;
+        }
+
+        .dm-sidebar {
+            max-height: 21vh;
+        }
+
+        .dm-thread-scroll {
+            min-height: 44vh;
+        }
+
+        .dm-thread-actions .btn .dm-btn-label {
+            display: none;
+        }
+
+        .messages-page.has-active-thread .dm-sidebar {
+            width: min(90vw, 320px);
+            max-width: calc(100% - 1.8rem);
+        }
+
+        .dm-avatar {
+            width: 30px;
+            height: 30px;
+            font-size: 0.74rem;
+        }
+
+        .dm-avatar.stacked {
+            width: 27px;
+            height: 27px;
+        }
+
+        .dm-message-avatar-wrap {
+            width: 30px;
+        }
+
+        .dm-bubble-wrap {
+            gap: 0.35rem;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="messages-page {% if active_thread and not search_query %}has-active-thread{% else %}no-active-thread{% endif %}">
+    <div class="messages-topbar">
+        <div class="messages-topbar-copy">
+            <h1><i class="bi bi-chat-dots"></i> Direct Messages</h1>
+            <p>Conversation-first messaging with grouped threads, replies, and shared files.</p>
+        </div>
+        <div class="messages-topbar-actions">
+            <button class="btn btn-primary" type="button" onclick="startNewConversation()">
+                <i class="bi bi-plus-circle"></i> New Conversation
+            </button>
+            <button class="btn btn-outline-primary" type="button" onclick="refreshMessages()">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+            </button>
+        </div>
+    </div>
+
+    <div class="messages-shell">
+        <aside class="dm-sidebar" id="dm-sidebar">
+            <div class="dm-sidebar-mobile-header">
+                <div>
+                    <strong>Chats</strong>
+                    <small>Direct and group conversations</small>
+                </div>
+                <button class="btn btn-sm btn-outline-secondary" type="button" onclick="toggleDmMobileSidebar(false)" aria-label="Close chats list">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            <div class="dm-sidebar-search">
+                <form onsubmit="searchMessages(); return false;">
+                    <div class="dm-search-input-wrap">
+                        <i class="bi bi-search"></i>
+                        <input type="text" class="form-control" id="searchInput" placeholder="Search DMs and group chats" value="{{ search_query or '' }}">
+                    </div>
+                </form>
+            </div>
+
+            <div class="dm-sidebar-scroll">
+                <div id="dm-sidebar-sections">
+                    {% include '_messages_sidebar_sections.html' %}
+                </div>
+            </div>
+        </aside>
+        <button type="button" class="dm-mobile-sidebar-backdrop" onclick="toggleDmMobileSidebar(false)" aria-label="Close chats list" aria-hidden="true"></button>
+
+        <section class="dm-thread-pane">
+            <div class="dm-thread-header" id="dm-thread-header">
+                {% include '_messages_thread_header.html' %}
+            </div>
+
+            <div class="dm-thread-scroll" id="dm-thread-scroll">
+                <div id="dm-thread-body">
+                    {% include '_messages_thread_body.html' %}
+                </div>
+                <button type="button" class="btn btn-primary btn-sm dm-thread-inline-notice" id="dm-new-messages-notice" style="display:none;" onclick="applyPendingDmSnapshot(true)">
+                    <i class="bi bi-arrow-down-circle"></i> New messages
+                </button>
+            </div>
+
+            {% if not search_query %}
+                <div class="dm-composer" id="dm-composer">
+                    <div class="dm-composer-topline">
+                        <div class="dm-composer-target">
+                            <strong id="composer-target-title">{{ active_thread.title if active_thread else 'New conversation' }}</strong>
+                            <small id="composer-target-subtitle">{{ active_thread.subtitle if active_thread else 'Select one or more recipients to begin' }}</small>
+                        </div>
+                        <div class="dm-thread-actions">
+                            <button class="btn btn-sm btn-outline-secondary" type="button" onclick="toggleRecipientEditor()">
+                                <i class="bi bi-people"></i> Recipients
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="dm-composer-reply" id="composer-reply-context">
+                        <div>
+                            <strong id="composer-reply-author"></strong>
+                            <div id="composer-reply-preview"></div>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" type="button" onclick="clearReplyContext()">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+
+                    <div id="composer-recipient-panel" {% if active_thread %}style="display:none;"{% endif %}>
+                        <div class="recipient-input-wrap">
+                            <div class="recipient-input">
+                                <div id="recipient-chips" class="d-flex flex-wrap gap-1"></div>
+                                <input type="text" id="messageRecipient" placeholder="Type a name, @handle, or user ID">
+                            </div>
+                            <div id="recipient-suggestions" class="recipient-suggestions"></div>
+                        </div>
+                    </div>
+
+                    <div class="dm-composer-input-wrap position-relative">
+                        <textarea class="form-control dm-composer-textarea" id="messageContent" placeholder="Write a message" onkeydown="handleMessageContentKeydown(event)"></textarea>
+                        <div id="dm-channel-suggestions" class="mention-suggestions" style="display:none;"></div>
+                    </div>
+
+                    <div id="message-file-preview" class="file-preview mt-1" style="display:none;"></div>
+
+                    <div class="dm-composer-actions">
+                        <div class="dm-composer-actions-left">
+                            <input type="file" id="message-file-input" style="display:none;" multiple accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.tex,.md,.json,.py,.js,.ts,.log,.csv,.tsv,.xlsx,.xlsm,.yaml,.yml,.xml,.html,.css,.sh,.bat,.cfg,.ini,.toml,.zip,.tar,.gz,.tgz,.bz2,.tbz2,.xz,.7z,.rar,.mp3,.mp4,.avi,.mkv,.mov,.webm">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('message-file-input').click()">
+                                <i class="bi bi-paperclip"></i> Add Files
+                            </button>
+                            <span class="text-muted small">Images, audio, video, docs, archives, spreadsheets</span>
+                        </div>
+                        <div class="dm-composer-actions-right">
+                            <button type="button" class="btn btn-outline-secondary" onclick="clearComposer()">Clear</button>
+                            <button type="button" class="btn btn-primary" id="sendMessageBtn" onclick="sendMessage()">
+                                <i class="bi bi-send"></i> Send
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+        </section>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const CURRENT_USER_ID = {{ user_id|tojson }};
+    const DM_BASE_MESSAGES_URL = {{ url_for('ui.messages')|tojson }};
+    let ACTIVE_THREAD = {{ active_thread|tojson if active_thread else 'null' }};
+    let INITIAL_RECIPIENTS = {{ composer_recipients|tojson }};
+
+    let messageSelectedFiles = [];
+    let recipientDirectory = {{ recipient_directory_seed|tojson if recipient_directory_seed else '[]' }};
+    let recipientDirectoryPromise = null;
+    let recipientDirectoryLoading = false;
+    let recipientDirectoryFetchedAt = Array.isArray(recipientDirectory) && recipientDirectory.length ? Date.now() : 0;
+    const RECIPIENT_DIRECTORY_TTL_MS = 30000;
+    let recipientMatches = [];
+    let recipientActiveIndex = -1;
+    let recipientLookupSerial = 0;
+    let selectedRecipients = Array.isArray(INITIAL_RECIPIENTS) ? [...INITIAL_RECIPIENTS] : [];
+    let dmChannelCandidates = null;
+    let dmChannelLoading = false;
+    let dmChannelContext = null;
+    let dmChannelMatches = [];
+    let dmChannelHighlightIndex = 0;
+    let activeReplyContext = null;
+    let composerUsesActiveThread = !!ACTIVE_THREAD;
+    let composerForceNewGroupThread = false;
+    const dmInlineEditStates = {};
+    let dmSnapshotSerial = 0;
+    let dmEventCursor = {{ workspace_event_cursor|tojson }};
+    let dmLastSidebarToken = {{ sidebar_state_token|tojson }};
+    let dmLastThreadToken = {{ thread_state_token|tojson }};
+    let pendingDmSnapshot = null;
+    let dmPollTimer = null;
+    let dmResyncTimer = null;
+    let dmEventPollInFlight = false;
+    let dmSnapshotInFlight = false;
+    let dmQueuedSnapshotOptions = null;
+    let dmComposerDragDepth = 0;
+    const DM_WORKSPACE_EVENT_TYPES = ['dm.message.created', 'dm.message.edited', 'dm.message.deleted', 'attachment.available'];
+    const DM_SEARCH_QUERY = {{ search_query|tojson }};
+
+    function isDmSearchActive() {
+        if (String(DM_SEARCH_QUERY || '').trim()) {
+            return true;
+        }
+        try {
+            return new URL(window.location.href).searchParams.has('search');
+        } catch (error) {
+            return window.location.search.includes('search=');
+        }
+    }
+
+    function matchesInitialRecipients() {
+        const current = selectedRecipients.map(rec => rec.user_id).filter(Boolean).sort();
+        const baseline = (INITIAL_RECIPIENTS || []).map(rec => rec.user_id).filter(Boolean).sort();
+        if (current.length !== baseline.length) return false;
+        return current.every((value, index) => value === baseline[index]);
+    }
+
+    function getDmQueryUrl(targetUrl) {
+        if (targetUrl) {
+            return targetUrl;
+        }
+        if (ACTIVE_THREAD) {
+            if (ACTIVE_THREAD.kind === 'group' && ACTIVE_THREAD.canonical_group_key) {
+                return `${DM_BASE_MESSAGES_URL}?group=${encodeURIComponent(ACTIVE_THREAD.canonical_group_key)}`;
+            }
+            if (ACTIVE_THREAD.kind === 'direct' && ACTIVE_THREAD.user_id) {
+                return `${DM_BASE_MESSAGES_URL}?with=${encodeURIComponent(ACTIVE_THREAD.user_id)}`;
+            }
+        }
+        return window.location.pathname + window.location.search;
+    }
+
+    function getThreadScrollState() {
+        const scroller = document.getElementById('dm-thread-scroll');
+        if (!scroller) return null;
+        const distanceFromBottom = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
+        return {
+            top: scroller.scrollTop,
+            nearBottom: distanceFromBottom < 120,
+        };
+    }
+
+    function scrollThreadToBottom() {
+        const scroller = document.getElementById('dm-thread-scroll');
+        if (scroller) {
+            scroller.scrollTop = scroller.scrollHeight;
+        }
+    }
+
+    function restoreThreadScrollState(state, options) {
+        const scroller = document.getElementById('dm-thread-scroll');
+        if (!scroller) return;
+        const opts = options || {};
+        if (opts.forceBottom || !state || state.nearBottom) {
+            scrollThreadToBottom();
+            return;
+        }
+        scroller.scrollTop = state.top || 0;
+    }
+
+    function hidePendingDmSnapshotNotice() {
+        const notice = document.getElementById('dm-new-messages-notice');
+        if (notice) notice.style.display = 'none';
+    }
+
+    function showPendingDmSnapshotNotice() {
+        const notice = document.getElementById('dm-new-messages-notice');
+        if (notice) notice.style.display = 'inline-flex';
+    }
+
+    function applyPendingDmSnapshot(forceBottom) {
+        if (!pendingDmSnapshot) return;
+        const snapshot = pendingDmSnapshot;
+        pendingDmSnapshot = null;
+        applyDmSnapshot(snapshot, { forceBottom: !!forceBottom, pushHistory: false });
+        hidePendingDmSnapshotNotice();
+    }
+
+    function queueDmSnapshot(options) {
+        const opts = options || {};
+        const existing = dmQueuedSnapshotOptions || {};
+        dmQueuedSnapshotOptions = {
+            targetUrl: opts.targetUrl || existing.targetUrl || null,
+            pushHistory: !!(existing.pushHistory || opts.pushHistory),
+            forceBottom: !!(existing.forceBottom || opts.forceBottom),
+            allowDeferred: !(existing.allowDeferred === false || opts.allowDeferred === false),
+            hardFallback: !!(existing.hardFallback || opts.hardFallback),
+        };
+    }
+
+    function applyDmSnapshot(data, options) {
+        const opts = options || {};
+        if (!data || !data.success) return;
+        const previousScroll = getThreadScrollState();
+
+        const sidebar = document.getElementById('dm-sidebar-sections');
+        if (sidebar && typeof data.sidebar_html === 'string') {
+            sidebar.innerHTML = data.sidebar_html;
+        }
+
+        const header = document.getElementById('dm-thread-header');
+        if (header && typeof data.thread_header_html === 'string') {
+            header.innerHTML = data.thread_header_html;
+        }
+
+        const body = document.getElementById('dm-thread-body');
+        if (body && typeof data.thread_body_html === 'string') {
+            body.innerHTML = data.thread_body_html;
+        }
+
+        ACTIVE_THREAD = data.active_thread || null;
+        INITIAL_RECIPIENTS = Array.isArray(data.composer_recipients) ? data.composer_recipients : [];
+        dmEventCursor = Math.max(Number(dmEventCursor || 0), Number(data.workspace_event_cursor || 0));
+        dmLastSidebarToken = data.sidebar_state_token || '';
+        dmLastThreadToken = data.thread_state_token || '';
+
+        if (composerUsesActiveThread) {
+            selectedRecipients = Array.isArray(INITIAL_RECIPIENTS) ? [...INITIAL_RECIPIENTS] : [];
+            updateRecipientChips();
+        }
+
+        updateComposerTarget();
+        applyDmRichContent();
+        restoreThreadScrollState(previousScroll, opts);
+        syncDmMobileLayoutState();
+
+        if (opts.pushHistory && typeof opts.targetUrl === 'string' && opts.targetUrl) {
+            window.history.replaceState({}, '', opts.targetUrl);
+        }
+
+        if (typeof formatTimestamps === 'function') {
+            formatTimestamps();
+        }
+        if (typeof window.requestCanopySidebarDmRefresh === 'function') {
+            window.requestCanopySidebarDmRefresh({ force: false }).catch(() => {});
+        }
+        startDmPolling();
+    }
+
+    function loadDmSnapshot(options) {
+        const opts = options || {};
+        if (isDmSearchActive()) {
+            if (opts.hardFallback) window.location.reload();
+            return Promise.resolve(null);
+        }
+        if (dmSnapshotInFlight) {
+            queueDmSnapshot(opts);
+            return Promise.resolve({ queued: true });
+        }
+
+        const targetUrl = getDmQueryUrl(opts.targetUrl);
+        const url = new URL(targetUrl, window.location.origin);
+        url.searchParams.delete('partial');
+        const serial = ++dmSnapshotSerial;
+        dmSnapshotInFlight = true;
+
+        return fetch(`/ajax/messages/thread_snapshot${url.search || ''}`, {
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+            .then(res => res.json())
+            .then(data => {
+                if (serial !== dmSnapshotSerial || !data || !data.success) {
+                    return data || null;
+                }
+
+                const threadChanged = (data.thread_state_token || '') !== (dmLastThreadToken || '');
+                const sidebarChanged = (data.sidebar_state_token || '') !== (dmLastSidebarToken || '');
+                if (!threadChanged && !sidebarChanged) {
+                    return data;
+                }
+
+                if (!opts.allowDeferred || !threadChanged) {
+                    applyDmSnapshot(data, opts);
+                    hidePendingDmSnapshotNotice();
+                    pendingDmSnapshot = null;
+                    return data;
+                }
+
+                const scrollState = getThreadScrollState();
+                if (scrollState && scrollState.nearBottom) {
+                    applyDmSnapshot(data, opts);
+                    hidePendingDmSnapshotNotice();
+                    pendingDmSnapshot = null;
+                    return data;
+                }
+
+                pendingDmSnapshot = data;
+                if (sidebarChanged) {
+                    const sidebar = document.getElementById('dm-sidebar-sections');
+                    if (sidebar && typeof data.sidebar_html === 'string') {
+                        sidebar.innerHTML = data.sidebar_html;
+                    }
+                    dmLastSidebarToken = data.sidebar_state_token || dmLastSidebarToken;
+                }
+                showPendingDmSnapshotNotice();
+                return data;
+            })
+            .catch((error) => {
+                if (opts.hardFallback) {
+                    window.location.reload();
+                }
+                return Promise.reject(error);
+            })
+            .finally(() => {
+                dmSnapshotInFlight = false;
+                if (dmQueuedSnapshotOptions) {
+                    const queued = dmQueuedSnapshotOptions;
+                    dmQueuedSnapshotOptions = null;
+                    window.setTimeout(() => {
+                        loadDmSnapshot(queued).catch(() => {});
+                    }, 0);
+                }
+            });
+    }
+
+    function stopDmPolling() {
+        if (dmPollTimer) {
+            window.clearInterval(dmPollTimer);
+            dmPollTimer = null;
+        }
+        if (dmResyncTimer) {
+            window.clearInterval(dmResyncTimer);
+            dmResyncTimer = null;
+        }
+    }
+
+    function pollDmEvents() {
+        if (dmEventPollInFlight || isDmSearchActive()) {
+            return;
+        }
+        dmEventPollInFlight = true;
+        const query = new URLSearchParams();
+        query.set('after_seq', String(Number(dmEventCursor || 0)));
+        query.set('limit', '100');
+        DM_WORKSPACE_EVENT_TYPES.forEach((eventType) => query.append('types', eventType));
+        fetch(`/api/v1/events?${query.toString()}`, {
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+            .then((res) => {
+                if (!res.ok) {
+                    throw new Error(`DM events poll failed (${res.status})`);
+                }
+                return res.json();
+            })
+            .then((data) => {
+                if (!data || typeof data !== 'object') return;
+                const nextSeq = Number(data.next_after_seq || 0);
+                if (nextSeq > Number(dmEventCursor || 0)) {
+                    dmEventCursor = nextSeq;
+                }
+                const items = Array.isArray(data.items) ? data.items : [];
+                if (!items.length) {
+                    return;
+                }
+                loadDmSnapshot({
+                    allowDeferred: true,
+                    forceBottom: false,
+                    hardFallback: false,
+                }).catch(() => {});
+            })
+            .catch(() => {})
+            .finally(() => {
+                dmEventPollInFlight = false;
+            });
+    }
+
+    function startDmPolling() {
+        stopDmPolling();
+        if (isDmSearchActive()) {
+            return;
+        }
+        pollDmEvents();
+        dmPollTimer = window.setInterval(() => {
+            if (document.hidden) return;
+            pollDmEvents();
+        }, 2500);
+        dmResyncTimer = window.setInterval(() => {
+            if (document.hidden) return;
+            loadDmSnapshot({
+                allowDeferred: true,
+                forceBottom: false,
+                hardFallback: false,
+            }).catch(() => {});
+        }, 45000);
+    }
+
+    function refreshMessages() {
+        if (isDmSearchActive()) {
+            window.location.reload();
+            return;
+        }
+        loadDmSnapshot({ forceBottom: false, allowDeferred: false, hardFallback: true }).catch(() => {});
+    }
+
+    function searchMessages() {
+        const query = (document.getElementById('searchInput')?.value || '').trim();
+        if (query) {
+            window.location.href = `{{ url_for('ui.messages') }}?search=${encodeURIComponent(query)}`;
+        } else {
+            window.location.href = `{{ url_for('ui.messages') }}`;
+        }
+    }
+
+    function startNewConversation() {
+        composerUsesActiveThread = false;
+        composerForceNewGroupThread = false;
+        selectedRecipients = [];
+        updateRecipientChips();
+        clearRecipientInput();
+        toggleRecipientEditor(true);
+        clearReplyContext();
+        updateComposerTarget();
+        const textarea = document.getElementById('messageContent');
+        if (textarea) {
+            textarea.focus();
+        }
+    }
+
+    function startFreshGroupDiscussion() {
+        if (!ACTIVE_THREAD || ACTIVE_THREAD.kind !== 'group') {
+            startNewConversation();
+            return;
+        }
+        const recipients = Array.isArray(INITIAL_RECIPIENTS) ? [...INITIAL_RECIPIENTS] : [];
+        if (recipients.length < 2) {
+            showAlert('A fresh thread needs at least two other group participants.', 'warning');
+            return;
+        }
+        composerUsesActiveThread = false;
+        composerForceNewGroupThread = true;
+        selectedRecipients = recipients;
+        updateRecipientChips();
+        clearRecipientInput();
+        clearReplyContext();
+        const panel = document.getElementById('composer-recipient-panel');
+        if (panel) panel.style.display = 'none';
+        updateComposerTarget();
+        const textarea = document.getElementById('messageContent');
+        if (textarea) {
+            textarea.focus();
+        }
+    }
+
+    function toggleRecipientEditor(forceOpen) {
+        const panel = document.getElementById('composer-recipient-panel');
+        if (!panel) return;
+        const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : panel.style.display === 'none';
+        panel.style.display = shouldOpen ? 'block' : 'none';
+        if (shouldOpen) {
+            composerUsesActiveThread = false;
+            const input = document.getElementById('messageRecipient');
+            if (input) {
+                input.focus();
+                updateRecipientSuggestions(normalizeRecipientInput(input.value || ''), { silentEmpty: false });
+            }
+        } else if (ACTIVE_THREAD && matchesInitialRecipients()) {
+            composerUsesActiveThread = true;
+        }
+        updateComposerTarget();
+    }
+
+    function updateComposerTarget() {
+        const title = document.getElementById('composer-target-title');
+        const subtitle = document.getElementById('composer-target-subtitle');
+        const panel = document.getElementById('composer-recipient-panel');
+        const composer = document.getElementById('dm-composer');
+        if (composer) {
+            composer.classList.toggle('dm-composer-recipient-mode', !composerUsesActiveThread || !ACTIVE_THREAD);
+            composer.classList.toggle('dm-composer-fresh-group-thread', !!composerForceNewGroupThread);
+        }
+        if (!title || !subtitle) return;
+
+        if (composerUsesActiveThread && ACTIVE_THREAD) {
+            title.textContent = ACTIVE_THREAD.title || 'Conversation';
+            subtitle.textContent = ACTIVE_THREAD.subtitle || (ACTIVE_THREAD.kind === 'group' ? 'Group conversation' : 'Direct message');
+            if (panel && selectedRecipients.length === INITIAL_RECIPIENTS.length) {
+                panel.style.display = 'none';
+            }
+            return;
+        }
+
+        if (selectedRecipients.length) {
+            const names = selectedRecipients.map(rec => rec.display_name || rec.username || rec.user_id);
+            title.textContent = names.join(', ');
+            if (composerForceNewGroupThread && selectedRecipients.length > 1) {
+                subtitle.textContent = `Fresh group thread with ${selectedRecipients.length} recipients`;
+            } else {
+                subtitle.textContent = selectedRecipients.length > 1 ? `New group DM with ${selectedRecipients.length} recipients` : 'New direct message';
+            }
+        } else {
+            title.textContent = 'New conversation';
+            subtitle.textContent = 'Select one or more recipients to begin';
+        }
+    }
+
+    function isCompactDmViewport() {
+        return window.matchMedia('(max-width: 767.98px)').matches;
+    }
+
+    // rAF gate: collapses rapid resize events (e.g. desktop window drag or
+    // mobile keyboard transition) into a single layout sync per frame.
+    let _dmLayoutSyncQueued = false;
+    function scheduleDmMobileLayoutSync() {
+        if (_dmLayoutSyncQueued) return;
+        _dmLayoutSyncQueued = true;
+        requestAnimationFrame(() => {
+            _dmLayoutSyncQueued = false;
+            syncDmMobileLayoutState({ keepSidebarOpen: true });
+        });
+    }
+
+    function syncDmMobileLayoutState(options) {
+        const opts = options || {};
+        const page = document.querySelector('.messages-page');
+        if (!page) return;
+        const hasActiveThread = !!ACTIVE_THREAD && !isDmSearchActive();
+        page.classList.toggle('has-active-thread', hasActiveThread);
+        page.classList.toggle('no-active-thread', !hasActiveThread);
+        if (!isCompactDmViewport() || !hasActiveThread) {
+            page.classList.remove('dm-mobile-sidebar-open');
+        } else if (!opts.keepSidebarOpen) {
+            page.classList.remove('dm-mobile-sidebar-open');
+        }
+        const isSidebarOpen = page.classList.contains('dm-mobile-sidebar-open');
+        document.querySelectorAll('.dm-mobile-sidebar-toggle').forEach((button) => {
+            button.setAttribute('aria-expanded', isSidebarOpen ? 'true' : 'false');
+        });
+        const backdrop = document.querySelector('.dm-mobile-sidebar-backdrop');
+        if (backdrop) {
+            backdrop.setAttribute('aria-hidden', isSidebarOpen ? 'false' : 'true');
+        }
+        if (!isCompactDmViewport() || !hasActiveThread) {
+            return;
+        }
+    }
+
+    function toggleDmMobileSidebar(forceOpen) {
+        const page = document.querySelector('.messages-page');
+        if (!page || !isCompactDmViewport() || !ACTIVE_THREAD || isDmSearchActive()) {
+            return;
+        }
+        const shouldOpen = typeof forceOpen === 'boolean'
+            ? forceOpen
+            : !page.classList.contains('dm-mobile-sidebar-open');
+        page.classList.toggle('dm-mobile-sidebar-open', shouldOpen);
+        document.querySelectorAll('.dm-mobile-sidebar-toggle').forEach((button) => {
+            button.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+        });
+        const backdrop = document.querySelector('.dm-mobile-sidebar-backdrop');
+        if (backdrop) {
+            backdrop.setAttribute('aria-hidden', shouldOpen ? 'false' : 'true');
+        }
+    }
+
+    function clearComposer() {
+        const textarea = document.getElementById('messageContent');
+        if (textarea) textarea.value = '';
+        messageSelectedFiles = [];
+        updateMessageFilePreview();
+        clearReplyContext();
+        if (!ACTIVE_THREAD || !composerUsesActiveThread) {
+            selectedRecipients = ACTIVE_THREAD && composerUsesActiveThread
+                ? [...INITIAL_RECIPIENTS]
+                : [];
+            updateRecipientChips();
+            updateComposerTarget();
+        }
+    }
+
+    function setupMessageFileUpload() {
+        const fileInput = document.getElementById('message-file-input');
+        if (!fileInput) return;
+        fileInput.addEventListener('change', (e) => {
+            const files = Array.from(e.target.files || []);
+            addMessageFiles(files);
+            e.target.value = '';
+        });
+    }
+
+    function getFileIcon(type, name = '') {
+        const lowerType = String(type || '').toLowerCase();
+        if (lowerType === 'text/markdown' || lowerType === 'text/x-markdown') return 'filetype-md';
+        if (lowerType.startsWith('image/')) return 'image';
+        if (lowerType.startsWith('video/')) return 'camera-video';
+        if (lowerType.startsWith('audio/')) return 'music-note';
+        if (lowerType.includes('pdf')) return 'file-pdf';
+        if (lowerType.includes('json')) return 'filetype-json';
+        if (lowerType.includes('spreadsheet') || lowerType.includes('excel') || String(name || '').toLowerCase().match(/\.(csv|tsv|xlsx|xlsm)$/)) return 'file-earmark-spreadsheet';
+        if (lowerType.includes('zip') || lowerType.includes('tar') || lowerType.includes('compressed') || lowerType.includes('archive')) return 'file-zip';
+        if (lowerType.startsWith('text/')) return 'file-text';
+        if (name) {
+            const lower = name.toLowerCase();
+            if (lower.endsWith('.pdf')) return 'file-pdf';
+            if (lower.endsWith('.md')) return 'filetype-md';
+            if (lower.endsWith('.json')) return 'filetype-json';
+            if (lower.endsWith('.py')) return 'filetype-py';
+            if (lower.endsWith('.js')) return 'filetype-js';
+            if (lower.endsWith('.ts')) return 'filetype-tsx';
+            if (lower.endsWith('.xml') || lower.endsWith('.html')) return 'filetype-xml';
+            if (lower.endsWith('.csv')) return 'filetype-csv';
+            if (lower.endsWith('.tsv') || lower.endsWith('.xlsx') || lower.endsWith('.xlsm')) return 'file-earmark-spreadsheet';
+            if (lower.endsWith('.txt') || lower.endsWith('.log') || lower.endsWith('.tex')) return 'file-text';
+            if (lower.endsWith('.yaml') || lower.endsWith('.yml') || lower.endsWith('.toml') || lower.endsWith('.ini') || lower.endsWith('.cfg') || lower.endsWith('.css') || lower.endsWith('.sh') || lower.endsWith('.bat')) return 'file-code';
+            if (lower.match(/\.(zip|tar|gz|tgz|bz2|tbz2|xz|7z|rar)$/)) return 'file-zip';
+        }
+        return 'file-earmark';
+    }
+
+    function addMessageFiles(files) {
+        const maxSize = 100 * 1024 * 1024;
+        const allowedMimeTypes = [
+            'image/',
+            'video/',
+            'audio/',
+            'application/pdf',
+            'text/',
+            'application/msword',
+            'application/json',
+            'application/xml',
+            'application/x-yaml',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-excel.sheet.macroenabled.12',
+            'application/javascript',
+            'application/typescript',
+            'application/octet-stream',
+            'application/zip',
+            'application/x-tar',
+            'application/x-7z-compressed',
+            'application/x-rar-compressed'
+        ];
+        const allowedExtensions = [
+            '.md', '.txt', '.tex', '.json', '.py', '.js', '.ts', '.log',
+            '.csv', '.tsv', '.xlsx', '.xlsm',
+            '.yaml', '.yml', '.xml', '.html', '.css', '.sh', '.bat', '.cfg', '.ini', '.toml',
+            '.pdf', '.doc', '.docx',
+            '.zip', '.tar', '.gz', '.tgz', '.bz2', '.tbz2', '.xz', '.7z', '.rar',
+            '.mp3', '.mp4', '.avi', '.mkv', '.mov', '.webm'
+        ];
+
+        files.forEach(file => {
+            if (file.size > maxSize) {
+                showAlert(`File ${file.name} is too large. Maximum size is 100MB.`, 'danger');
+                return;
+            }
+
+            const ext = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+            if (!allowedMimeTypes.some(type => String(file.type || '').startsWith(type)) && !allowedExtensions.includes(ext)) {
+                showAlert(`File type ${file.type || 'unknown'} is not supported.`, 'danger');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const raw = String(e.target.result || '');
+                const base64Data = raw.includes(',') ? raw.split(',')[1] : raw;
+                messageSelectedFiles.push({
+                    name: file.name,
+                    type: file.type,
+                    size: file.size,
+                    data: base64Data,
+                });
+                updateMessageFilePreview();
+            };
+            reader.onerror = function() {
+                showAlert(`Failed to read file: ${file.name}`, 'danger');
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    function updateMessageFilePreview() {
+        const preview = document.getElementById('message-file-preview');
+        if (!preview) return;
+        if (!messageSelectedFiles.length) {
+            preview.style.display = 'none';
+            preview.innerHTML = '';
+            return;
+        }
+        preview.style.display = 'block';
+        preview.innerHTML = messageSelectedFiles.map((file, index) => `
+            <div class="file-preview-item d-inline-flex align-items-center gap-2 me-2 mb-2 p-2 rounded">
+                <i class="bi bi-${getFileIcon(file.type, file.name)}"></i>
+                <span class="small">${escapeHtml(file.name)}</span>
+                <button type="button" class="btn-close btn-sm" onclick="removeMessageFile(${index})" style="font-size:0.7rem;"></button>
+            </div>
+        `).join('');
+    }
+
+    function removeMessageFile(index) {
+        messageSelectedFiles.splice(index, 1);
+        updateMessageFilePreview();
+    }
+
+    function setupMessagePasteHandler() {
+        const messageInput = document.getElementById('messageContent');
+        if (messageInput) {
+            messageInput.addEventListener('paste', handleMessagePaste);
+        }
+    }
+
+    function handleMessagePaste(e) {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+
+        let hasImage = false;
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (item.type.indexOf('image') !== -1) {
+                hasImage = true;
+                const file = item.getAsFile();
+                if (file) {
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                    const newFile = new File([file], `pasted-image-${timestamp}.png`, { type: file.type });
+                    addMessageFiles([newFile]);
+                    showAlert('Image pasted successfully!', 'success');
+                }
+                break;
+            }
+        }
+
+        if (hasImage) {
+            e.preventDefault();
+        }
+    }
+
+    function setDmComposerDragState(active) {
+        const composer = document.getElementById('dm-composer');
+        if (!composer) return;
+        composer.classList.toggle('dragover', !!active);
+    }
+
+    function setupMessageDropzone() {
+        const composer = document.getElementById('dm-composer');
+        if (!composer) return;
+
+        const dragHasFiles = (event) => {
+            const transfer = event.dataTransfer;
+            if (!transfer) return false;
+            const types = Array.from(transfer.types || []);
+            return types.includes('Files') || !!(transfer.files && transfer.files.length);
+        };
+
+        composer.addEventListener('dragenter', (event) => {
+            if (!dragHasFiles(event)) return;
+            event.preventDefault();
+            dmComposerDragDepth += 1;
+            setDmComposerDragState(true);
+        });
+
+        composer.addEventListener('dragover', (event) => {
+            if (!dragHasFiles(event)) return;
+            event.preventDefault();
+            if (event.dataTransfer) {
+                event.dataTransfer.dropEffect = 'copy';
+            }
+            setDmComposerDragState(true);
+        });
+
+        composer.addEventListener('dragleave', (event) => {
+            if (!dragHasFiles(event)) return;
+            event.preventDefault();
+            dmComposerDragDepth = Math.max(0, dmComposerDragDepth - 1);
+            if (dmComposerDragDepth === 0) {
+                setDmComposerDragState(false);
+            }
+        });
+
+        composer.addEventListener('drop', (event) => {
+            if (!dragHasFiles(event)) return;
+            event.preventDefault();
+            dmComposerDragDepth = 0;
+            setDmComposerDragState(false);
+            const files = Array.from(event.dataTransfer?.files || []);
+            if (!files.length) return;
+            addMessageFiles(files);
+            const textarea = document.getElementById('messageContent');
+            if (textarea) textarea.focus();
+        });
+    }
+
+    function normalizeRecipientInput(value) {
+        if (!value) return '';
+        return value.trim().replace(/^@/, '');
+    }
+
+    function mergeRecipientDirectory(users) {
+        if (!Array.isArray(users) || !users.length) return recipientDirectory;
+        const merged = new Map();
+        (Array.isArray(recipientDirectory) ? recipientDirectory : []).forEach((entry) => {
+            if (entry && entry.user_id) merged.set(entry.user_id, entry);
+        });
+        users.forEach((entry) => {
+            if (entry && entry.user_id) merged.set(entry.user_id, entry);
+        });
+        recipientDirectory = Array.from(merged.values());
+        recipientDirectoryFetchedAt = Date.now();
+        return recipientDirectory;
+    }
+
+    function renderRecipientSuggestionState(text) {
+        const dropdown = document.getElementById('recipient-suggestions');
+        if (!dropdown) return;
+        dropdown.innerHTML = `<div class="recipient-suggestion-state">${escapeHtml(text)}</div>`;
+        showRecipientSuggestions(true);
+    }
+
+    function fetchRecipientDirectory(options) {
+        const opts = options || {};
+        const forceRefresh = !!opts.forceRefresh;
+        const query = normalizeRecipientInput(opts.query || '');
+        const limit = opts.limit || 20;
+        const isFresh = recipientDirectoryFetchedAt > 0 && (Date.now() - recipientDirectoryFetchedAt) < RECIPIENT_DIRECTORY_TTL_MS;
+        if (!query && !forceRefresh && Array.isArray(recipientDirectory) && recipientDirectory.length && isFresh) {
+            return Promise.resolve(recipientDirectory);
+        }
+        if (!query && recipientDirectoryLoading && recipientDirectoryPromise) {
+            return recipientDirectoryPromise;
+        }
+
+        recipientDirectoryLoading = true;
+        const params = new URLSearchParams();
+        params.set('limit', String(limit));
+        if (query) params.set('q', query);
+        recipientDirectoryPromise = fetch(`/ajax/mention_suggestions?${params.toString()}`, {
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+            .then(res => res.json())
+            .then(data => {
+                const users = data && Array.isArray(data.users) ? data.users : [];
+                if (query) {
+                    mergeRecipientDirectory(users);
+                    return users;
+                }
+                recipientDirectory = users;
+                recipientDirectoryFetchedAt = Date.now();
+                return recipientDirectory;
+            })
+            .catch(() => {
+                return query ? [] : (Array.isArray(recipientDirectory) ? recipientDirectory : []);
+            })
+            .finally(() => {
+                recipientDirectoryLoading = false;
+                recipientDirectoryPromise = null;
+            });
+        return recipientDirectoryPromise;
+    }
+
+    function isRecipientSelected(userId) {
+        return selectedRecipients.some(r => r.user_id === userId);
+    }
+
+    function updateRecipientChips() {
+        const chipContainer = document.getElementById('recipient-chips');
+        if (!chipContainer) return;
+        chipContainer.innerHTML = selectedRecipients.map(rec => {
+            const unknownClass = rec.unknown ? 'unknown' : '';
+            const label = escapeHtml(rec.display_name || rec.user_id);
+            const safeId = escapeHtml(rec.user_id);
+            const idShort = escapeHtml(rec.user_id.length > 12 ? rec.user_id.slice(0, 10) + '…' : rec.user_id);
+            return `
+                <span class="recipient-chip ${unknownClass}" data-user-id="${safeId}">
+                    <span>${label}</span>
+                    <span class="recipient-chip-id">• ${idShort}</span>
+                    <button type="button" class="recipient-chip-remove" data-uid="${safeId}">&times;</button>
+                </span>
+            `;
+        }).join('');
+        chipContainer.querySelectorAll('.recipient-chip-remove').forEach(btn => {
+            btn.addEventListener('click', function() {
+                removeRecipient(this.getAttribute('data-uid'));
+            });
+        });
+    }
+
+    function removeRecipient(userId) {
+        selectedRecipients = selectedRecipients.filter(r => r.user_id !== userId);
+        composerUsesActiveThread = false;
+        updateRecipientChips();
+        updateComposerTarget();
+    }
+
+    function addRecipient(rec) {
+        if (!rec || !rec.user_id || isRecipientSelected(rec.user_id)) return;
+        selectedRecipients.push(rec);
+        composerUsesActiveThread = false;
+        updateRecipientChips();
+        updateComposerTarget();
+    }
+
+    function showRecipientSuggestions(show) {
+        const dropdown = document.getElementById('recipient-suggestions');
+        if (!dropdown) return;
+        dropdown.style.display = show ? 'block' : 'none';
+    }
+
+    function getRecipientInitials(text) {
+        if (!text) return '?';
+        const parts = text.trim().split(/\s+/).filter(Boolean);
+        if (!parts.length) return '?';
+        if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+        return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+
+    function renderRecipientSuggestions() {
+        const dropdown = document.getElementById('recipient-suggestions');
+        if (!dropdown) return;
+        if (!recipientMatches.length) {
+            dropdown.innerHTML = '';
+            showRecipientSuggestions(false);
+            return;
+        }
+        dropdown.innerHTML = recipientMatches.map((rec, idx) => {
+            const activeClass = idx === recipientActiveIndex ? 'active' : '';
+            const display = escapeHtml(rec.display_name || rec.username || rec.user_id);
+            const safeUserId = escapeHtml(rec.user_id);
+            const initials = escapeHtml(getRecipientInitials(rec.display_name || rec.username || rec.user_id));
+            const avatar = rec.avatar_url && rec.avatar_url.startsWith('/')
+                ? `<div class="recipient-suggestion-avatar"><img src="${escapeHtml(rec.avatar_url)}" alt="${display}"></div>`
+                : `<div class="recipient-suggestion-avatar">${initials}</div>`;
+            return `
+                <div class="recipient-suggestion-item ${activeClass}" data-idx="${idx}">
+                    ${avatar}
+                    <div>
+                        <div class="recipient-suggestion-name">${display}</div>
+                        <div class="recipient-suggestion-id">${safeUserId}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        dropdown.querySelectorAll('.recipient-suggestion-item').forEach(item => {
+            item.addEventListener('click', function() {
+                selectRecipientByIndex(parseInt(this.getAttribute('data-idx'), 10));
+            });
+        });
+        showRecipientSuggestions(true);
+    }
+
+    function selectRecipientByIndex(index) {
+        const rec = recipientMatches[index];
+        if (!rec) return;
+        addRecipient({
+            user_id: rec.user_id,
+            display_name: rec.display_name || rec.username || rec.user_id,
+            username: rec.username || rec.user_id,
+            avatar_url: rec.avatar_url || null,
+            unknown: false,
+        });
+        clearRecipientInput();
+    }
+
+    function clearRecipientInput() {
+        const input = document.getElementById('messageRecipient');
+        if (input) input.value = '';
+        recipientMatches = [];
+        recipientActiveIndex = -1;
+        renderRecipientSuggestions();
+    }
+
+    function filterRecipientMatches(query) {
+        const term = query.toLowerCase();
+        return recipientDirectory
+            .filter(rec => rec.user_id && !isRecipientSelected(rec.user_id))
+            .filter(rec => {
+                const display = (rec.display_name || rec.username || rec.user_id).toLowerCase();
+                const username = (rec.username || '').toLowerCase();
+                const userId = rec.user_id.toLowerCase();
+                return display.includes(term) || username.includes(term) || userId.includes(term);
+            })
+            .slice(0, 8);
+    }
+
+    function updateRecipientSuggestions(query, options) {
+        const opts = options || {};
+        const term = query.trim();
+        const localMatches = term
+            ? filterRecipientMatches(term)
+            : recipientDirectory.filter(rec => rec.user_id && !isRecipientSelected(rec.user_id)).slice(0, 8);
+        recipientMatches = localMatches;
+        recipientActiveIndex = recipientMatches.length ? 0 : -1;
+        if (recipientMatches.length) {
+            renderRecipientSuggestions();
+        } else if (!opts.silentEmpty) {
+            renderRecipientSuggestionState(term ? 'Searching people…' : 'Loading people…');
+        }
+        if (!opts.skipRefresh) {
+            const lookupSerial = ++recipientLookupSerial;
+            fetchRecipientDirectory({
+                forceRefresh: !recipientDirectory.length,
+                query: term,
+                limit: term ? 8 : 12,
+            }).then((matches) => {
+                if (lookupSerial !== recipientLookupSerial) return;
+                const serverMatches = Array.isArray(matches)
+                    ? matches.filter(rec => rec && rec.user_id && !isRecipientSelected(rec.user_id)).slice(0, 8)
+                    : [];
+                recipientMatches = serverMatches.length ? serverMatches : localMatches;
+                recipientActiveIndex = recipientMatches.length ? 0 : -1;
+                if (recipientMatches.length) {
+                    renderRecipientSuggestions();
+                } else {
+                    renderRecipientSuggestionState(term ? 'No matching users found yet.' : 'No users available.');
+                }
+            });
+        }
+    }
+
+    function commitRecipientFromInput(forceValue) {
+        const input = document.getElementById('messageRecipient');
+        if (!input) return;
+        const raw = normalizeRecipientInput(forceValue || input.value);
+        if (!raw) return;
+
+        const rawLower = raw.toLowerCase();
+        let match = recipientDirectory.find(rec => rec.user_id === raw)
+            || recipientDirectory.find(rec => (rec.username || '').toLowerCase() === rawLower)
+            || recipientDirectory.find(rec => (rec.display_name || '').toLowerCase() === rawLower);
+
+        if (!match) {
+            const partialMatches = recipientDirectory
+                .filter(rec => rec && rec.user_id)
+                .filter(rec => {
+                    const userId = String(rec.user_id || '').toLowerCase();
+                    const username = String(rec.username || '').toLowerCase();
+                    const displayName = String(rec.display_name || '').toLowerCase();
+                    return userId.startsWith(rawLower)
+                        || username.startsWith(rawLower)
+                        || displayName.startsWith(rawLower)
+                        || userId.includes(rawLower)
+                        || username.includes(rawLower)
+                        || displayName.includes(rawLower);
+                });
+            if (partialMatches.length === 1) {
+                match = partialMatches[0];
+            }
+        }
+
+        if (match) {
+            addRecipient({
+                user_id: match.user_id,
+                display_name: match.display_name || match.username || match.user_id,
+                username: match.username || match.user_id,
+                avatar_url: match.avatar_url || null,
+                unknown: false,
+            });
+        } else {
+            if (raw.length > 100) {
+                showAlert('Recipient ID is too long (max 100 characters).', 'warning');
+                return;
+            }
+            if (!/^[A-Za-z0-9_.\-@]+$/.test(raw)) {
+                showAlert('Recipient ID contains invalid characters.', 'warning');
+                return;
+            }
+            addRecipient({
+                user_id: raw,
+                display_name: raw,
+                username: raw,
+                avatar_url: null,
+                unknown: true,
+            });
+        }
+        clearRecipientInput();
+    }
+
+    function handleRecipientKeydown(event) {
+        if (event.key === 'ArrowDown') {
+            if (recipientMatches.length) {
+                recipientActiveIndex = (recipientActiveIndex + 1) % recipientMatches.length;
+                renderRecipientSuggestions();
+            }
+            event.preventDefault();
+        } else if (event.key === 'ArrowUp') {
+            if (recipientMatches.length) {
+                recipientActiveIndex = (recipientActiveIndex - 1 + recipientMatches.length) % recipientMatches.length;
+                renderRecipientSuggestions();
+            }
+            event.preventDefault();
+        } else if (event.key === 'Enter' || event.key === 'Tab' || event.key === ',') {
+            if (recipientMatches.length && recipientActiveIndex >= 0) {
+                selectRecipientByIndex(recipientActiveIndex);
+            } else {
+                commitRecipientFromInput();
+            }
+            event.preventDefault();
+        } else if (event.key === 'Backspace') {
+            const input = document.getElementById('messageRecipient');
+            if (input && !input.value && selectedRecipients.length) {
+                selectedRecipients.pop();
+                updateRecipientChips();
+                updateComposerTarget();
+            }
+        }
+    }
+
+    function setupRecipientPicker() {
+        const input = document.getElementById('messageRecipient');
+        const wrapper = document.querySelector('.recipient-input-wrap');
+        if (!input || !wrapper) return;
+
+        input.addEventListener('input', (e) => {
+            composerUsesActiveThread = false;
+            updateRecipientSuggestions(normalizeRecipientInput(e.target.value));
+        });
+        input.addEventListener('focus', (e) => {
+            updateRecipientSuggestions(normalizeRecipientInput(e.target.value || ''), { silentEmpty: false });
+        });
+        input.addEventListener('click', () => {
+            updateRecipientSuggestions(normalizeRecipientInput(input.value || ''), { silentEmpty: false });
+        });
+        input.addEventListener('keydown', handleRecipientKeydown);
+        document.addEventListener('click', (e) => {
+            if (!wrapper.contains(e.target)) showRecipientSuggestions(false);
+        });
+        fetchRecipientDirectory().then(() => updateRecipientSuggestions('', { skipRefresh: true, silentEmpty: true }));
+    }
+
+    function getDmChannelContext(textarea) {
+        if (!textarea) return null;
+        const pos = textarea.selectionStart || 0;
+        const before = textarea.value.slice(0, pos);
+        const match = /(^|[\s\(\[\{<>"'.,;:!?])#([A-Za-z0-9_.-]{0,79})$/.exec(before);
+        if (!match) return null;
+        const start = before.length - match[2].length - 1;
+        return { query: match[2], start, end: pos };
+    }
+
+    function fetchDmChannelCandidates() {
+        if (dmChannelCandidates || dmChannelLoading) return Promise.resolve(dmChannelCandidates || []);
+        dmChannelLoading = true;
+        return apiCall('/ajax/channel_suggestions')
+            .then(data => {
+                dmChannelLoading = false;
+                dmChannelCandidates = data && data.success && Array.isArray(data.channels) ? data.channels : [];
+                return dmChannelCandidates;
+            })
+            .catch(() => {
+                dmChannelLoading = false;
+                dmChannelCandidates = [];
+                return [];
+            });
+    }
+
+    function hideDmChannelSuggestions() {
+        const box = document.getElementById('dm-channel-suggestions');
+        if (box) box.style.display = 'none';
+        dmChannelContext = null;
+        dmChannelMatches = [];
+    }
+
+    function renderDmChannelSuggestions(list, context) {
+        const box = document.getElementById('dm-channel-suggestions');
+        if (!box) return;
+        if (!list || !list.length || !context) {
+            hideDmChannelSuggestions();
+            return;
+        }
+        dmChannelMatches = list;
+        dmChannelHighlightIndex = 0;
+        box.innerHTML = '';
+        list.forEach((item, i) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'mention-item' + (i === 0 ? ' highlighted' : '');
+            const label = item.name || item.id;
+            btn.innerHTML = `<div class="flex-grow-1"><div><strong>#${escapeHtml(label)}</strong></div><div class="mention-meta">${escapeHtml(item.privacy_mode || 'open')}</div></div>`;
+            btn.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                insertDmChannel(label, context);
+            });
+            btn.addEventListener('mouseenter', () => {
+                dmChannelHighlightIndex = i;
+                box.querySelectorAll('.mention-item').forEach((el, j) => el.classList.toggle('highlighted', j === i));
+            });
+            box.appendChild(btn);
+        });
+        box.style.display = '';
+    }
+
+    function insertDmChannel(name, context) {
+        const textarea = document.getElementById('messageContent');
+        if (!textarea || !context) return;
+        const value = textarea.value;
+        const before = value.slice(0, context.start);
+        const after = value.slice(context.end);
+        const insert = '#' + name + ' ';
+        textarea.value = before + insert + after;
+        const newPos = before.length + insert.length;
+        textarea.setSelectionRange(newPos, newPos);
+        textarea.focus();
+        hideDmChannelSuggestions();
+    }
+
+    function handleDmChannelInput() {
+        const textarea = document.getElementById('messageContent');
+        if (!textarea) return;
+        const context = getDmChannelContext(textarea);
+        if (!context) {
+            hideDmChannelSuggestions();
+            return;
+        }
+        fetchDmChannelCandidates().then(channels => {
+            const q = (context.query || '').toLowerCase();
+            const matches = channels.filter(item => {
+                const name = (item.name || '').toLowerCase();
+                return !q || name.includes(q);
+            }).slice(0, 6);
+            dmChannelContext = context;
+            renderDmChannelSuggestions(matches, context);
+        });
+    }
+
+    function handleDmChannelKeydown(e) {
+        const box = document.getElementById('dm-channel-suggestions');
+        if (!box || box.style.display === 'none' || !dmChannelMatches.length) return;
+        if (e.key === 'Tab' || e.key === 'Enter') {
+            const idx = Math.min(dmChannelHighlightIndex, dmChannelMatches.length - 1);
+            const item = dmChannelMatches[idx];
+            if (item) {
+                insertDmChannel(item.name || item.id, dmChannelContext);
+                e.preventDefault();
+            }
+            return;
+        }
+        if (e.key === 'ArrowDown') {
+            dmChannelHighlightIndex = (dmChannelHighlightIndex + 1) % dmChannelMatches.length;
+            box.querySelectorAll('.mention-item').forEach((el, i) => el.classList.toggle('highlighted', i === dmChannelHighlightIndex));
+            e.preventDefault();
+            return;
+        }
+        if (e.key === 'ArrowUp') {
+            dmChannelHighlightIndex = (dmChannelHighlightIndex - 1 + dmChannelMatches.length) % dmChannelMatches.length;
+            box.querySelectorAll('.mention-item').forEach((el, i) => el.classList.toggle('highlighted', i === dmChannelHighlightIndex));
+            e.preventDefault();
+        }
+    }
+
+    function applyDmRichContentInScope(scope) {
+        const root = scope && scope.querySelectorAll ? scope : document;
+        root.querySelectorAll('.dm-message-text').forEach(el => {
+            const raw = el.textContent || '';
+            const tmp = document.createElement('div');
+            tmp.textContent = raw;
+            let html = tmp.innerHTML;
+            if (typeof linkifyMentions === 'function') html = linkifyMentions(html);
+            if (typeof linkifyChannels === 'function') html = linkifyChannels(html);
+            el.innerHTML = html;
+            if (typeof renderMathInElementSafe === 'function') renderMathInElementSafe(el);
+        });
+        if (typeof processRichEmbeds === 'function') {
+            if (scope && scope.getAttribute) {
+                const messageId = scope.getAttribute('data-message-id');
+                if (messageId) {
+                    const escapedId = window.CSS && typeof window.CSS.escape === 'function'
+                        ? window.CSS.escape(String(messageId))
+                        : String(messageId).replace(/["\\]/g, '\\$&');
+                    processRichEmbeds(`.message-item[data-message-id="${escapedId}"] .dm-bubble-copy`);
+                    return;
+                }
+            }
+            processRichEmbeds('.dm-bubble-copy');
+        }
+    }
+
+    function applyDmRichContent() {
+        applyDmRichContentInScope(document);
+    }
+
+    function dmEscapeAttr(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function getCurrentUserDmIdentity() {
+        const existingLabel = document.querySelector('.dm-message-row.outbound .dm-message-sender');
+        const existingAvatar = document.querySelector('.dm-message-row.outbound .dm-avatar img');
+        return {
+            label: (existingLabel && existingLabel.textContent || CURRENT_USER_ID || 'You').trim() || CURRENT_USER_ID || 'You',
+            avatarUrl: existingAvatar ? (existingAvatar.getAttribute('src') || existingAvatar.src || '') : '',
+        };
+    }
+
+    function isDmTargetActiveThread(targetUrl) {
+        if (isDmSearchActive()) return false;
+        try {
+            const desired = new URL(getDmQueryUrl(targetUrl), window.location.origin);
+            const current = new URL(getDmQueryUrl(), window.location.origin);
+            return (
+                String(desired.searchParams.get('with') || '') === String(current.searchParams.get('with') || '') &&
+                String(desired.searchParams.get('group') || '') === String(current.searchParams.get('group') || '')
+            );
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function buildOptimisticDmSecurityChip(security) {
+        if (!security || typeof security !== 'object') return '';
+        const mode = String(security.mode || '').trim();
+        const state = String(security.state || '').trim();
+        let kind = 'warning';
+        let icon = 'shield-exclamation';
+        if (mode === 'peer_e2e_v1') {
+            kind = 'e2e';
+            icon = 'shield-lock-fill';
+        } else if (mode === 'local_only') {
+            kind = 'local';
+            icon = 'pc-display';
+        } else if (state === 'decrypt_failed') {
+            kind = 'failure';
+            icon = 'shield-x';
+        }
+        const title = dmEscapeAttr(String(security.label || 'DM security').trim() || 'DM security');
+        const hidden = escapeHtml(String(security.label || 'DM security').trim() || 'DM security');
+        return `<span class="dm-security-chip ${kind}" title="${title}" aria-label="${title}"><i class="bi bi-${icon}"></i><span class="visually-hidden security-text">${hidden}</span></span>`;
+    }
+
+    function renderOptimisticDmAttachments(attachments) {
+        const items = Array.isArray(attachments) ? attachments : [];
+        if (!items.length) return '';
+        return `<div class="dm-attachment-list">${items.map((attachment) => {
+            const name = escapeHtml(String((attachment && attachment.name) || 'Attachment'));
+            const url = String((attachment && attachment.url) || '').trim();
+            const type = escapeHtml(String((attachment && attachment.type) || 'file'));
+            const rawType = String((attachment && attachment.type) || '').trim().toLowerCase();
+            const size = Number(attachment && attachment.size);
+            const sizeLabel = Number.isFinite(size) && size > 0 ? ` • ${escapeHtml((size / 1024 / 1024 >= 1 ? `${(size / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(size / 1024))} KB`))}` : '';
+            const download = url ? `<a href="${dmEscapeAttr(url)}" class="btn btn-sm btn-outline-primary" download="${dmEscapeAttr(name)}"><i class="bi bi-download"></i></a>` : '';
+            let mediaHtml = '';
+            if (url && rawType.startsWith('audio/')) {
+                mediaHtml = `
+                    <audio controls preload="metadata" class="w-100 mt-2">
+                        <source src="${dmEscapeAttr(url)}" type="${dmEscapeAttr(rawType || 'audio/mpeg')}">
+                    </audio>
+                `;
+            } else if (url && rawType.startsWith('video/')) {
+                mediaHtml = `
+                    <video controls preload="metadata" playsinline class="w-100 mt-2" style="max-width:100%;border-radius:12px;background:#000;">
+                        <source src="${dmEscapeAttr(url)}" type="${dmEscapeAttr(rawType || 'video/mp4')}">
+                    </video>
+                `;
+            }
+            return `
+                <div class="dm-attachment dm-attachment-card">
+                    <div class="dm-attachment-title-row">
+                        <div>
+                            <strong>${name}</strong>
+                            <small>${type}${sizeLabel}</small>
+                        </div>
+                        ${download}
+                    </div>
+                    ${mediaHtml}
+                </div>
+            `;
+        }).join('')}</div>`;
+    }
+
+    function renderOptimisticDmRow(message, options = {}) {
+        const identity = getCurrentUserDmIdentity();
+        const metadata = (message && typeof message.metadata === 'object' && message.metadata) ? message.metadata : {};
+        const attachments = Array.isArray(message && message.attachments) ? message.attachments : (Array.isArray(metadata.attachments) ? metadata.attachments : []);
+        const replyPreview = options.replyPreview || null;
+        const security = (metadata && typeof metadata.security === 'object') ? metadata.security : null;
+        const sourceLayout = (metadata && metadata.source_layout && typeof metadata.source_layout === 'object') ? metadata.source_layout : null;
+        const sourceLayoutAttr = sourceLayout ? ` data-canopy-source-layout="${dmEscapeAttr(JSON.stringify(sourceLayout))}"` : '';
+        const editedHtml = message && message.edited_at ? `<span title="Edited ${dmEscapeAttr(message.edited_at)}">Edited</span>` : '';
+        const replyHtml = replyPreview ? `
+            <button type="button" class="dm-bubble-reply-preview" onclick="jumpToMessage('${dmEscapeAttr(replyPreview.id)}')">
+                <strong>${escapeHtml(replyPreview.sender_name || 'Reply')}</strong>
+                <span>${escapeHtml(replyPreview.preview || 'Replying in thread')}</span>
+            </button>
+        ` : '';
+        const avatarHtml = identity.avatarUrl
+            ? `<div class="dm-avatar" data-user-id="${dmEscapeAttr(CURRENT_USER_ID)}" data-origin-peer="" onclick='copyUserId(${JSON.stringify(CURRENT_USER_ID)}, ${JSON.stringify(identity.label)}, this)' title="View user details"><img src="${dmEscapeAttr(identity.avatarUrl)}" alt="${escapeHtml(identity.label)}"></div>`
+            : `<div class="dm-avatar" data-user-id="${dmEscapeAttr(CURRENT_USER_ID)}" data-origin-peer="" onclick='copyUserId(${JSON.stringify(CURRENT_USER_ID)}, ${JSON.stringify(identity.label)}, this)' title="View user details"><span>${escapeHtml((identity.label || CURRENT_USER_ID || 'Y').slice(0, 2).toUpperCase())}</span></div>`;
+        return `
+            <div class="dm-message-row outbound message-item"
+                 id="message-${dmEscapeAttr(message.id)}"
+                 data-message-id="${dmEscapeAttr(message.id)}"
+                 data-user-id="${dmEscapeAttr(CURRENT_USER_ID)}">
+                <div class="dm-message-main flex-grow-1">
+                    <div class="dm-message-meta">
+                        <span class="dm-message-sender" data-user-display="${dmEscapeAttr(CURRENT_USER_ID)}">${escapeHtml(identity.label)}</span>
+                        <span data-timestamp="${dmEscapeAttr(message.created_at || new Date().toISOString())}">${escapeHtml(message.created_at || '')}</span>
+                    </div>
+                    <div class="dm-bubble-wrap">
+                        <div class="dropdown dm-message-menu" data-message-actions="1">
+                            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                                <i class="bi bi-three-dots"></i>
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li><a class="dropdown-item" href="#" onclick="replyToMessage('${dmEscapeAttr(message.id)}', ${JSON.stringify(identity.label)}, ${JSON.stringify(((message.content || '').toString().slice(0, 140)) || '(attachment)')}); return false;"><i class="bi bi-reply"></i> Reply</a></li>
+                                <li><a class="dropdown-item" href="#" data-bookmark-button="1" data-source-type="dm_message" data-source-id="${dmEscapeAttr(message.id)}" data-bookmarked="false" onclick="event.preventDefault();"><i class="bi bi-bookmark"></i> <span data-bookmark-label>Save</span></a></li>
+                                <li><a class="dropdown-item" href="#" onclick="editMessage('${dmEscapeAttr(message.id)}'); return false;"><i class="bi bi-pencil"></i> Edit</a></li>
+                                <li><a class="dropdown-item text-danger" href="#" onclick="deleteMessage('${dmEscapeAttr(message.id)}'); return false;"><i class="bi bi-trash"></i> Delete</a></li>
+                            </ul>
+                        </div>
+                        <div class="dm-bubble">
+                            <div class="message-content" data-message-content="1"${sourceLayoutAttr}>
+                                ${replyHtml}
+                                ${message.content ? `<div class="dm-bubble-copy dm-message-text" data-canopy-source-ref="content:lede">${escapeHtml(message.content)}</div>` : ''}
+                                ${renderOptimisticDmAttachments(attachments)}
+                            </div>
+                            <div class="dm-bubble-footer">
+                                ${buildOptimisticDmSecurityChip(security)}
+                                ${editedHtml}
+                                <span data-timestamp="${dmEscapeAttr(message.created_at || new Date().toISOString())}">${escapeHtml(message.created_at || '')}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="dm-message-avatar-wrap">
+                    ${avatarHtml}
+                </div>
+            </div>
+        `;
+    }
+
+    function appendOptimisticDmMessage(message, options = {}) {
+        if (!message || !message.id || !isDmTargetActiveThread(options.targetUrl)) {
+            return false;
+        }
+        const body = document.getElementById('dm-thread-body');
+        if (!body) return false;
+        if (body.querySelector('.dm-empty-state')) {
+            body.innerHTML = '';
+        }
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = renderOptimisticDmRow(message, options);
+        const row = wrapper.firstElementChild;
+        if (!row) return false;
+        body.appendChild(row);
+        applyDmRichContentInScope(row);
+        if (typeof window.canopyApplySourceLayoutsInScope === 'function') {
+            window.canopyApplySourceLayoutsInScope(row);
+        }
+        if (typeof formatTimestamps === 'function') {
+            formatTimestamps();
+        }
+        scrollThreadToBottom();
+        return true;
+    }
+
+    function getThreadHrefForRecipients(recipients, responseData) {
+        const uniqueRecipients = Array.from(new Set((recipients || []).filter(Boolean)));
+        if (!uniqueRecipients.length) return `{{ url_for('ui.messages') }}`;
+        if (uniqueRecipients.length > 1) {
+            const groupId = responseData && responseData.group_id ? responseData.group_id : null;
+            return groupId ? `{{ url_for('ui.messages') }}?group=${encodeURIComponent(groupId)}` : `{{ url_for('ui.messages') }}`;
+        }
+        return `{{ url_for('ui.messages') }}?with=${encodeURIComponent(uniqueRecipients[0])}`;
+    }
+
+    function sendMessage() {
+        const textarea = document.getElementById('messageContent');
+        const content = (textarea?.value || '').trim();
+        const manualInput = document.getElementById('messageRecipient')?.value.trim() || '';
+
+        if (!content && messageSelectedFiles.length === 0) {
+            showAlert('Message content or attachments required', 'danger');
+            return;
+        }
+
+        let recipients = selectedRecipients.map(r => r.user_id).filter(Boolean);
+        if (!recipients.length && manualInput) {
+            commitRecipientFromInput(manualInput);
+            recipients = selectedRecipients.map(r => r.user_id).filter(Boolean);
+        }
+        if (!recipients.length) {
+            showAlert('Select at least one recipient.', 'warning');
+            toggleRecipientEditor(true);
+            return;
+        }
+
+        const payload = {
+            content,
+            attachments: messageSelectedFiles,
+        };
+
+        if (recipients.length > 1) payload.recipient_ids = recipients;
+        else payload.recipient_id = recipients[0];
+        if (composerForceNewGroupThread && recipients.length > 1) {
+            payload.force_new_group = true;
+        }
+
+        if (activeReplyContext && activeReplyContext.messageId) {
+            payload.reply_to = activeReplyContext.messageId;
+        }
+
+        const sendBtn = document.getElementById('sendMessageBtn');
+        if (sendBtn) {
+            sendBtn.disabled = true;
+            sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Sending...';
+        }
+
+        apiCall('/ajax/send_message', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+        .then((data) => {
+            const targetUrl = getThreadHrefForRecipients(recipients, data || {});
+            const replyPreview = activeReplyContext && activeReplyContext.messageId ? {
+                id: activeReplyContext.messageId,
+                sender_name: activeReplyContext.senderLabel || 'Reply',
+                preview: activeReplyContext.preview || 'Replying in thread',
+            } : null;
+            if (textarea) textarea.value = '';
+            messageSelectedFiles = [];
+            updateMessageFilePreview();
+            clearReplyContext();
+            composerUsesActiveThread = true;
+            composerForceNewGroupThread = false;
+            const appended = appendOptimisticDmMessage((data && data.message) || null, {
+                targetUrl,
+                replyPreview,
+            });
+            window.setTimeout(() => {
+                loadDmSnapshot({
+                    targetUrl,
+                    pushHistory: true,
+                    forceBottom: true,
+                    allowDeferred: false,
+                    hardFallback: !appended,
+                }).catch(() => {
+                    if (!appended) {
+                        window.location.href = targetUrl;
+                    }
+                });
+            }, appended ? 120 : 0);
+        })
+        .catch(error => {
+            showAlert(error.error || 'Failed to send message', 'danger');
+        })
+        .finally(() => {
+            if (sendBtn) {
+                sendBtn.disabled = false;
+                sendBtn.innerHTML = '<i class="bi bi-send"></i> Send';
+            }
+        });
+    }
+
+    function handleMessageContentKeydown(event) {
+        const suggestionsBox = document.getElementById('dm-channel-suggestions');
+        const suggestionsVisible = suggestionsBox && suggestionsBox.style.display !== 'none';
+        if (suggestionsVisible) return;
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            sendMessage();
+        }
+    }
+
+    function replyToMessage(messageId, senderLabel, preview) {
+        activeReplyContext = { messageId, senderLabel, preview };
+        const box = document.getElementById('composer-reply-context');
+        const author = document.getElementById('composer-reply-author');
+        const content = document.getElementById('composer-reply-preview');
+        if (box && author && content) {
+            author.textContent = senderLabel || 'Reply';
+            content.textContent = preview || 'Replying in thread';
+            box.classList.add('active');
+        }
+        const textarea = document.getElementById('messageContent');
+        if (textarea) {
+            textarea.focus();
+            textarea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }
+
+    function clearReplyContext() {
+        activeReplyContext = null;
+        const box = document.getElementById('composer-reply-context');
+        if (box) box.classList.remove('active');
+    }
+
+    function jumpToMessage(messageId) {
+        const el = document.getElementById(`message-${messageId}`);
+        if (!el) return;
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.remove('flash-focus');
+        void el.offsetWidth;
+        el.classList.add('flash-focus');
+    }
+
+    function deleteMessage(messageId) {
+        if (!confirm('Delete this message?')) return;
+        apiCall('/ajax/delete_message', {
+            method: 'POST',
+            body: JSON.stringify({ message_id: messageId })
+        })
+        .then(data => {
+            if (data.success) {
+                loadDmSnapshot({
+                    forceBottom: false,
+                    allowDeferred: false,
+                    hardFallback: true,
+                }).then(() => {
+                    showAlert('Message deleted', 'success');
+                }).catch(() => {
+                    const msgEl = document.querySelector(`[data-message-id="${messageId}"]`);
+                    if (msgEl) msgEl.remove();
+                    showAlert('Message deleted', 'success');
+                });
+            } else {
+                showAlert(data.error || 'Failed to delete', 'danger');
+            }
+        })
+        .catch(err => showAlert('Delete failed: ' + (err.message || err), 'danger'));
+    }
+
+    function editMessage(messageId) {
+        apiCall(`/ajax/get_message_data/${messageId}`)
+            .then(data => {
+                if (data.success && data.message) {
+                    beginInlineMessageEdit(data.message);
+                } else {
+                    showAlert(data.error || 'Could not load message for editing', 'danger');
+                }
+            })
+            .catch(err => {
+                showAlert('Failed to load message: ' + (err.message || err), 'danger');
+            });
+    }
+
+    function getDmMessageElement(messageId) {
+        return document.querySelector(`.message-item[data-message-id="${messageId}"]`);
+    }
+
+    function cancelAllDmInlineEdits(exceptMessageId) {
+        document.querySelectorAll('.dm-inline-editor[data-inline-dm-for]').forEach(panel => {
+            const mid = panel.getAttribute('data-inline-dm-for');
+            if (!exceptMessageId || mid !== exceptMessageId) {
+                cancelInlineMessageEdit(mid, true);
+            }
+        });
+    }
+
+    function beginInlineMessageEdit(message) {
+        const messageId = message && message.id;
+        if (!messageId) return;
+        cancelAllDmInlineEdits(messageId);
+
+        const msgEl = getDmMessageElement(messageId);
+        if (!msgEl) {
+            showAlert('Message card not available in this view', 'warning');
+            return;
+        }
+
+        const existingPanel = msgEl.querySelector('.dm-inline-editor');
+        if (existingPanel) {
+            const textarea = existingPanel.querySelector('textarea[data-inline-dm-content]');
+            if (textarea) textarea.focus();
+            return;
+        }
+
+        const contentWrap = msgEl.querySelector('[data-message-content]');
+        const actionsWrap = msgEl.querySelector('[data-message-actions]');
+        if (contentWrap) contentWrap.classList.add('d-none');
+        if (actionsWrap) actionsWrap.classList.add('d-none');
+        msgEl.classList.add('editing');
+
+        const panel = document.createElement('div');
+        panel.className = 'dm-inline-editor';
+        panel.setAttribute('data-inline-dm-for', messageId);
+        panel.innerHTML = `
+            <textarea class="form-control" data-inline-dm-content placeholder="Edit message">${escapeHtml(message.content || '')}</textarea>
+            <div class="dm-inline-toolbar">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-inline-dm-cancel>Cancel</button>
+                <button type="button" class="btn btn-sm btn-primary" data-inline-dm-save><i class="bi bi-check2"></i> Save</button>
+            </div>
+        `;
+
+        const host = msgEl.querySelector('.dm-message-main');
+        if (!host) return;
+        host.appendChild(panel);
+
+        const textarea = panel.querySelector('textarea[data-inline-dm-content]');
+        const saveBtn = panel.querySelector('[data-inline-dm-save]');
+        const cancelBtn = panel.querySelector('[data-inline-dm-cancel]');
+        if (textarea) {
+            textarea.focus();
+            textarea.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    saveInlineMessageEdit(messageId);
+                } else if (event.key === 'Escape') {
+                    event.preventDefault();
+                    cancelInlineMessageEdit(messageId);
+                }
+            });
+        }
+        if (saveBtn) saveBtn.addEventListener('click', () => saveInlineMessageEdit(messageId));
+        if (cancelBtn) cancelBtn.addEventListener('click', () => cancelInlineMessageEdit(messageId));
+    }
+
+    function cancelInlineMessageEdit(messageId, silent) {
+        const msgEl = getDmMessageElement(messageId);
+        if (!msgEl) return;
+        const panel = msgEl.querySelector(`.dm-inline-editor[data-inline-dm-for="${messageId}"]`);
+        if (panel) panel.remove();
+        msgEl.classList.remove('editing');
+        const contentWrap = msgEl.querySelector('[data-message-content]');
+        const actionsWrap = msgEl.querySelector('[data-message-actions]');
+        if (contentWrap) contentWrap.classList.remove('d-none');
+        if (actionsWrap) actionsWrap.classList.remove('d-none');
+        if (!silent) showAlert('Edit cancelled', 'secondary');
+    }
+
+    function setInlineDmEditSaving(messageId, saving) {
+        const msgEl = getDmMessageElement(messageId);
+        if (!msgEl) return;
+        const panel = msgEl.querySelector(`.dm-inline-editor[data-inline-dm-for="${messageId}"]`);
+        if (!panel) return;
+        const textarea = panel.querySelector('textarea[data-inline-dm-content]');
+        const saveBtn = panel.querySelector('[data-inline-dm-save]');
+        const cancelBtn = panel.querySelector('[data-inline-dm-cancel]');
+        if (textarea) textarea.disabled = !!saving;
+        if (cancelBtn) cancelBtn.disabled = !!saving;
+        if (saveBtn) {
+            if (saving) {
+                saveBtn.dataset.originalHtml = saveBtn.innerHTML;
+                saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving...';
+                saveBtn.disabled = true;
+            } else {
+                saveBtn.innerHTML = saveBtn.dataset.originalHtml || '<i class="bi bi-check2"></i> Save';
+                saveBtn.disabled = false;
+            }
+        }
+    }
+
+    function applyInlineDmMessageEdit(messageId, content, editedAt) {
+        const msgEl = getDmMessageElement(messageId);
+        if (!msgEl) return;
+        const contentWrap = msgEl.querySelector('[data-message-content]');
+        let textEl = msgEl.querySelector('.dm-message-text');
+        if (!textEl && contentWrap && content) {
+            textEl = document.createElement('div');
+            textEl.className = 'dm-bubble-copy dm-message-text';
+            textEl.setAttribute('data-canopy-source-ref', 'content:lede');
+            const attachmentList = contentWrap.querySelector('.dm-attachment-list');
+            if (attachmentList) contentWrap.insertBefore(textEl, attachmentList);
+            else contentWrap.appendChild(textEl);
+        }
+        if (textEl) {
+            textEl.textContent = content || '';
+            applyDmRichContentInScope(msgEl);
+        }
+        const footer = msgEl.querySelector('.dm-bubble-footer');
+        if (footer) {
+            let badge = footer.querySelector('[data-dm-edited-badge]');
+            if (!badge) {
+                badge = document.createElement('span');
+                badge.setAttribute('data-dm-edited-badge', '1');
+                const timeNode = footer.querySelector('[data-timestamp]');
+                if (timeNode) footer.insertBefore(badge, timeNode);
+                else footer.appendChild(badge);
+            }
+            const title = editedAt ? `Edited ${editedAt}` : 'Edited';
+            badge.textContent = 'Edited';
+            badge.setAttribute('title', title);
+        }
+    }
+
+    function saveInlineMessageEdit(messageId) {
+        const msgEl = getDmMessageElement(messageId);
+        if (!msgEl) return;
+        const panel = msgEl.querySelector(`.dm-inline-editor[data-inline-dm-for="${messageId}"]`);
+        const textarea = panel ? panel.querySelector('textarea[data-inline-dm-content]') : null;
+        const content = textarea ? textarea.value.trim() : '';
+        if (!panel || panel.dataset.saving === '1') return;
+        if (!content) {
+            showAlert('Message content required', 'warning');
+            return;
+        }
+        panel.dataset.saving = '1';
+        setInlineDmEditSaving(messageId, true);
+
+        apiCall('/ajax/update_message', {
+            method: 'POST',
+            body: JSON.stringify({ message_id: messageId, content })
+        })
+        .then(data => {
+            if (!data || data.error) {
+                showAlert((data && data.error) || 'Failed to update message', 'danger');
+                return;
+            }
+            const updatedMessage = (data && typeof data.message === 'object' && data.message) ? data.message : null;
+            applyInlineDmMessageEdit(
+                messageId,
+                (updatedMessage && typeof updatedMessage.content === 'string') ? updatedMessage.content : content,
+                (updatedMessage && updatedMessage.edited_at) ? updatedMessage.edited_at : new Date().toISOString(),
+            );
+            cancelInlineMessageEdit(messageId, true);
+            showAlert('Message updated successfully', 'success');
+        })
+        .catch(err => showAlert('Failed to update message: ' + (err.message || err), 'danger'))
+        .finally(() => {
+            if (panel && panel.isConnected) {
+                panel.dataset.saving = '0';
+            }
+            setInlineDmEditSaving(messageId, false);
+        });
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function resolveDmDropdownElement(target) {
+        if (!(target instanceof Element)) return null;
+        if (target.classList.contains('dm-message-menu')) return target;
+        return target.closest('.dm-message-menu');
+    }
+
+    function updateDmDropdownDirection(dropdown) {
+        if (!(dropdown instanceof Element)) return;
+        dropdown.classList.remove('dropup');
+        const scroller = document.getElementById('dm-thread-scroll');
+        const toggle = dropdown.querySelector('[data-bs-toggle="dropdown"]');
+        const menu = dropdown.querySelector('.dropdown-menu');
+        if (!scroller || !toggle || !menu) return;
+
+        const scrollerRect = scroller.getBoundingClientRect();
+        const toggleRect = toggle.getBoundingClientRect();
+        const menuHeight = Math.max(menu.scrollHeight || 0, menu.offsetHeight || 0, 180);
+        const spaceBelow = scrollerRect.bottom - toggleRect.bottom;
+        const spaceAbove = toggleRect.top - scrollerRect.top;
+        if (menuHeight + 16 > spaceBelow && spaceAbove > spaceBelow) {
+            dropdown.classList.add('dropup');
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        updateRecipientChips();
+        updateComposerTarget();
+        syncDmMobileLayoutState();
+        setupMessageFileUpload();
+        setupMessagePasteHandler();
+        setupMessageDropzone();
+        setupRecipientPicker();
+        applyDmRichContent();
+
+        const messageContent = document.getElementById('messageContent');
+        if (messageContent) {
+            messageContent.addEventListener('input', handleDmChannelInput);
+            messageContent.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') hideDmChannelSuggestions();
+                else handleDmChannelKeydown(e);
+            });
+            messageContent.addEventListener('blur', () => setTimeout(hideDmChannelSuggestions, 150));
+        }
+
+        document.addEventListener('show.bs.dropdown', (event) => {
+            const dropdown = resolveDmDropdownElement(event.target);
+            if (dropdown) updateDmDropdownDirection(dropdown);
+        });
+        document.addEventListener('shown.bs.dropdown', (event) => {
+            const dropdown = resolveDmDropdownElement(event.target);
+            const msgRow = dropdown ? dropdown.closest('.message-item') : null;
+            if (msgRow) msgRow.classList.add('dropdown-open');
+        });
+        document.addEventListener('hidden.bs.dropdown', (event) => {
+            const dropdown = resolveDmDropdownElement(event.target);
+            const msgRow = dropdown ? dropdown.closest('.message-item') : null;
+            if (msgRow) msgRow.classList.remove('dropdown-open');
+            if (dropdown) dropdown.classList.remove('dropup');
+        });
+
+        if (window.location.hash && window.location.hash.startsWith('#message-')) {
+            const messageId = window.location.hash.replace('#message-', '');
+            setTimeout(() => jumpToMessage(messageId), 120);
+        }
+
+        const searchInput = document.getElementById('searchInput');
+        if (searchInput) {
+            searchInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    searchMessages();
+                }
+            });
+        }
+
+        if (!window.location.hash && ACTIVE_THREAD) {
+            scrollThreadToBottom();
+        }
+        startDmPolling();
+        window.addEventListener('resize', scheduleDmMobileLayoutSync);
+        window.addEventListener('focus', () => syncDmMobileLayoutState({ keepSidebarOpen: true }));
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                toggleDmMobileSidebar(false);
+            }
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && !isDmSearchActive()) {
+                syncDmMobileLayoutState({ keepSidebarOpen: true });
+                pollDmEvents();
+            }
+        });
+    });
+</script>
+{% endblock %}

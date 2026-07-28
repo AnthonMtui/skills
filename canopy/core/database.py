@@ -1,0 +1,2466 @@
+"""
+Database management for Canopy local storage.
+
+Implements local-first storage with SQLite for messages, keys, trust scores, and metadata.
+
+Project: Canopy - Local Mesh Communication
+License: Apache 2.0
+"""
+
+import sqlite3
+import json
+import logging
+import os
+import threading
+import time
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Any, Tuple, cast
+from pathlib import Path
+from contextlib import contextmanager
+
+from .config import Config
+from .logging_config import log_performance, LogOperation
+
+logger = logging.getLogger('canopy.database')
+
+
+class DatabaseManager:
+    """Manages local SQLite database operations for Canopy."""
+    
+    def __init__(self, config: Config):
+        """Initialize database manager with configuration."""
+        logger.info("Initializing DatabaseManager")
+        self.config = config
+        self.db_path = Path(config.storage.database_path)
+
+        logger.info(f"Database path: {self.db_path.absolute()}")
+        db_existed = self.db_path.exists()
+        if db_existed:
+            try:
+                size_bytes = self.db_path.stat().st_size
+            except Exception:
+                size_bytes = -1
+            logger.info(
+                "Using existing database file (exists=%s, size_bytes=%s)",
+                True,
+                size_bytes,
+            )
+        else:
+            logger.info("No existing database file detected; creating new database on first write")
+        
+        # Create database directory
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Created database directory: {self.db_path.parent.absolute()}")
+
+        # Thread-local storage for connection pooling
+        self._local = threading.local()
+        self._pool_lock = threading.Lock()
+        self._pool_stats = {'created': 0, 'reused': 0, 'closed': 0}
+
+        # WAL checkpoint background thread
+        self._checkpoint_thread: Optional[threading.Thread] = None
+        self._checkpoint_stop = threading.Event()
+        self._checkpoint_interval = 300  # 5 minutes
+
+        # Initialize database
+        with LogOperation("Database initialization"):
+            self._initialize_database()
+
+        # Enable WAL mode and run integrity check on startup
+        self._configure_resilience()
+
+        # Start WAL checkpoint background thread
+        self._start_checkpoint_thread()
+
+        logger.info("DatabaseManager initialized successfully")
+    
+    def _initialize_database(self) -> None:
+        """Initialize database with required tables.
+
+        Uses a longer busy_timeout (30s) and retries on lock so startup can
+        wait out brief lock storms (e.g. Dropbox, stale WAL/shm).
+        """
+        logger.info("Ensuring database schema (IF NOT EXISTS)...")
+        last_error = None
+        for attempt in range(3):
+            try:
+                with self.get_connection(busy_timeout_ms=30_000) as conn:
+                    # Create tables
+                    conn.executescript("""
+                -- Users and identity management
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    public_key TEXT NOT NULL,
+                    password_hash TEXT,  -- NULL for system/legacy users
+                    display_name TEXT,
+                    agent_directives TEXT,
+                    origin_peer TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                -- Per-user crypto keypairs (Ed25519 + X25519)
+                CREATE TABLE IF NOT EXISTS user_keys (
+                    user_id TEXT PRIMARY KEY,
+                    ed25519_public_key TEXT NOT NULL,
+                    ed25519_private_key TEXT NOT NULL,  -- Encrypted with user's password-derived key
+                    x25519_public_key TEXT NOT NULL,
+                    x25519_private_key TEXT NOT NULL,   -- Encrypted with user's password-derived key
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+                
+                -- API keys for access control
+                CREATE TABLE IF NOT EXISTS api_keys (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    key_hash TEXT UNIQUE NOT NULL,
+                    permissions TEXT NOT NULL,  -- JSON blob
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP,
+                    revoked BOOLEAN DEFAULT FALSE,
+                    FOREIGN KEY (user_id) REFERENCES users (id)
+                );
+                
+                -- Messages for local chat
+                CREATE TABLE IF NOT EXISTS messages (
+                    id TEXT PRIMARY KEY,
+                    sender_id TEXT NOT NULL,
+                    recipient_id TEXT,  -- NULL for broadcast messages
+                    content TEXT NOT NULL,
+                    message_type TEXT DEFAULT 'text',  -- text, file, voice, etc.
+                    metadata TEXT,  -- JSON blob for additional data
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    edited_at TIMESTAMP,
+                    delivered_at TIMESTAMP,
+                    read_at TIMESTAMP,
+                    FOREIGN KEY (sender_id) REFERENCES users (id)
+                );
+                
+                -- Trust scores for reputation management
+                CREATE TABLE IF NOT EXISTS trust_scores (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    peer_id TEXT NOT NULL,
+                    score INTEGER DEFAULT 0,
+                    last_interaction TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    compliance_events INTEGER DEFAULT 0,
+                    violation_events INTEGER DEFAULT 0,
+                    notes TEXT,
+                    manually_penalized BOOLEAN NOT NULL DEFAULT 0,
+                    UNIQUE(peer_id)
+                );
+                
+                -- Delete signals for data removal compliance
+                CREATE TABLE IF NOT EXISTS delete_signals (
+                    id TEXT PRIMARY KEY,
+                    target_peer_id TEXT NOT NULL,
+                    data_type TEXT NOT NULL,
+                    data_id TEXT NOT NULL,
+                    reason TEXT,
+                    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    acknowledged_at TIMESTAMP,
+                    complied_at TIMESTAMP,
+                    violated_at TIMESTAMP,
+                    rejected_at TIMESTAMP,
+                    status TEXT DEFAULT 'pending'  -- pending, acknowledged, complied, violated, rejected
+                );
+                
+                -- Local network peers discovery
+                CREATE TABLE IF NOT EXISTS peers (
+                    id TEXT PRIMARY KEY,
+                    address TEXT NOT NULL,
+                    port INTEGER NOT NULL,
+                    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT DEFAULT 'online',  -- online, offline, blocked
+                    capabilities TEXT,  -- JSON blob for peer capabilities
+                    UNIQUE(address, port)
+                );
+                
+                -- Feed posts and content sharing
+                CREATE TABLE IF NOT EXISTS feed_posts (
+                    id TEXT PRIMARY KEY,
+                    author_id TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    content_type TEXT DEFAULT 'text',
+                    metadata TEXT,  -- JSON blob
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP,
+                    visibility TEXT DEFAULT 'network',  -- public, network, trusted, private, custom
+                    likes INTEGER DEFAULT 0,
+                    comments INTEGER DEFAULT 0,
+                    shares INTEGER DEFAULT 0,
+                    FOREIGN KEY (author_id) REFERENCES users (id)
+                );
+                
+                -- Custom permissions for posts
+                CREATE TABLE IF NOT EXISTS post_permissions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    post_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (post_id) REFERENCES feed_posts (id) ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES users (id),
+                    UNIQUE(post_id, user_id)
+                );
+                
+                -- System configuration and state
+                CREATE TABLE IF NOT EXISTS system_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                -- Instance authentication (web UI password)
+                CREATE TABLE IF NOT EXISTS instance_auth (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),  -- Only one row allowed
+                    password_hash TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                -- Per-recipient wrapped content keys for crypto-enforced permissions
+                CREATE TABLE IF NOT EXISTS post_content_keys (
+                    post_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    wrapped_key TEXT NOT NULL,  -- Hex-encoded wrapped CEK
+                    granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (post_id, user_id),
+                    FOREIGN KEY (post_id) REFERENCES feed_posts(id) ON DELETE CASCADE
+                );
+                
+                -- Indexes for performance
+                CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
+                CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient_id);
+                CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+                CREATE INDEX IF NOT EXISTS idx_trust_scores_peer ON trust_scores(peer_id);
+                CREATE INDEX IF NOT EXISTS idx_delete_signals_peer ON delete_signals(target_peer_id);
+                CREATE INDEX IF NOT EXISTS idx_feed_posts_author ON feed_posts(author_id);
+                CREATE INDEX IF NOT EXISTS idx_feed_posts_created_at ON feed_posts(created_at);
+                -- idx_feed_posts_expires_at is created in migration (so existing DBs without expires_at do not fail here)
+
+                -- User feed algorithm preferences
+                CREATE TABLE IF NOT EXISTS user_feed_preferences (
+                    user_id TEXT PRIMARY KEY,
+                    algorithm_json TEXT NOT NULL DEFAULT '{}',
+                    last_viewed_at TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users (id)
+                );
+
+                -- Agent action inbox (mention-triggered items, pull-first)
+                CREATE TABLE IF NOT EXISTS agent_inbox (
+                    id TEXT PRIMARY KEY,
+                    agent_user_id TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    message_id TEXT,
+                    channel_id TEXT,
+                    sender_user_id TEXT,
+                    origin_peer TEXT,
+                    trigger_type TEXT NOT NULL,
+                    payload_json TEXT,
+                    status TEXT DEFAULT 'pending',
+                    priority TEXT DEFAULT 'normal',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    seen_at TIMESTAMP,
+                    handled_at TIMESTAMP,
+                    completed_at TIMESTAMP,
+                    completion_ref_json TEXT,
+                    expires_at TIMESTAMP,
+                    triggered_by_inbox_id TEXT,
+                    depth INTEGER DEFAULT 0,
+                    FOREIGN KEY (agent_user_id) REFERENCES users (id)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_inbox_unique
+                    ON agent_inbox(agent_user_id, source_type, source_id, trigger_type);
+                CREATE INDEX IF NOT EXISTS idx_agent_inbox_status
+                    ON agent_inbox(agent_user_id, status, created_at);
+                CREATE INDEX IF NOT EXISTS idx_agent_inbox_sender
+                    ON agent_inbox(sender_user_id);
+                CREATE INDEX IF NOT EXISTS idx_agent_inbox_expires
+                        ON agent_inbox(expires_at);
+
+                CREATE TABLE IF NOT EXISTS agent_inbox_config (
+                    user_id TEXT PRIMARY KEY,
+                    config_json TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users (id)
+                );
+
+                -- Best-effort extracted text context for external content (e.g., YouTube)
+                CREATE TABLE IF NOT EXISTS content_contexts (
+                    id TEXT PRIMARY KEY,
+                    source_type TEXT NOT NULL,   -- feed_post, channel_message, direct_message, url
+                    source_id TEXT,
+                    source_url TEXT NOT NULL,
+                    provider TEXT NOT NULL,      -- youtube, web, unknown
+                    owner_user_id TEXT NOT NULL,
+                    title TEXT,
+                    author TEXT,
+                    transcript_lang TEXT,
+                    transcript_text TEXT,
+                    extracted_text TEXT,
+                    summary_text TEXT,
+                    owner_note TEXT,
+                    status TEXT DEFAULT 'ready', -- ready, partial, unavailable, error
+                    error TEXT,
+                    metadata TEXT,               -- JSON blob
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(source_type, source_id, source_url, owner_user_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_content_contexts_source
+                    ON content_contexts(source_type, source_id, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_content_contexts_owner
+                    ON content_contexts(owner_user_id, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_content_contexts_url
+                    ON content_contexts(source_url);
+
+                -- Agent presence (0.4.0: last check-in for status badges)
+                CREATE TABLE IF NOT EXISTS agent_presence (
+                    user_id TEXT PRIMARY KEY,
+                    last_checkin_at TIMESTAMP NOT NULL,
+                    last_source TEXT,
+                    updated_at TIMESTAMP NOT NULL
+                );
+                    CREATE INDEX IF NOT EXISTS idx_agent_presence_checkin
+                    ON agent_presence(last_checkin_at);
+
+                CREATE TABLE IF NOT EXISTS agent_runtime_state (
+                    user_id TEXT PRIMARY KEY,
+                    last_event_fetch_at TIMESTAMP,
+                    last_event_cursor_seen INTEGER,
+                    last_inbox_fetch_at TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_runtime_event_fetch
+                    ON agent_runtime_state(last_event_fetch_at);
+                CREATE INDEX IF NOT EXISTS idx_agent_runtime_inbox_fetch
+                    ON agent_runtime_state(last_inbox_fetch_at);
+
+                CREATE TABLE IF NOT EXISTS agent_event_subscription_state (
+                    user_id TEXT PRIMARY KEY,
+                    custom_enabled INTEGER NOT NULL DEFAULT 0,
+                    updated_at TIMESTAMP NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_event_subscription_state_enabled
+                    ON agent_event_subscription_state(custom_enabled, updated_at);
+
+                CREATE TABLE IF NOT EXISTS agent_event_subscriptions (
+                    user_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    updated_at TIMESTAMP NOT NULL,
+                    PRIMARY KEY (user_id, event_type)
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_event_subscriptions_user
+                    ON agent_event_subscriptions(user_id, updated_at);
+
+                -- Local workspace event journal (additive read/delivery model)
+                CREATE TABLE IF NOT EXISTS workspace_events (
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id TEXT UNIQUE NOT NULL,
+                    event_type TEXT NOT NULL,
+                    actor_user_id TEXT,
+                    target_user_id TEXT,
+                    channel_id TEXT,
+                    post_id TEXT,
+                    message_id TEXT,
+                    visibility_scope TEXT NOT NULL,
+                    dedupe_key TEXT,
+                    payload_json TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_workspace_events_created_at
+                    ON workspace_events(created_at);
+                CREATE INDEX IF NOT EXISTS idx_workspace_events_event_type_created
+                    ON workspace_events(event_type, created_at);
+                CREATE INDEX IF NOT EXISTS idx_workspace_events_target_created
+                    ON workspace_events(target_user_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_workspace_events_message_created
+                    ON workspace_events(message_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_workspace_events_channel_created
+                    ON workspace_events(channel_id, created_at);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_events_dedupe
+                    ON workspace_events(dedupe_key)
+                    WHERE dedupe_key IS NOT NULL;
+                    """)
+
+                    if self._identity_portability_enabled():
+                        self._ensure_identity_portability_schema(conn)
+
+                    # Insert default system state
+                    conn.execute("""
+                        INSERT OR IGNORE INTO system_state (key, value) VALUES 
+                        ('initialized', ?),
+                        ('version', '0.1.0')
+                    """, (datetime.now(timezone.utc).isoformat(),))
+
+                    conn.commit()
+                    logger.info("Database schema ensured successfully (CREATE TABLE IF NOT EXISTS)")
+
+                    # Run migrations for existing databases
+                    # Ensure migration tracking table exists
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS schema_migrations (
+                            version INTEGER PRIMARY KEY,
+                            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            description TEXT
+                        )
+                    """)
+                    conn.commit()
+                    self._run_migrations(conn)
+                break
+            except sqlite3.OperationalError as e:
+                last_error = e
+                err_lower = str(e).lower()
+                if ("locked" in err_lower or "busy" in err_lower) and attempt < 2:
+                    logger.warning(
+                        "Database locked/busy (attempt %s/3), retrying in 2s: %s",
+                        attempt + 1, e,
+                    )
+                    time.sleep(2)
+                    continue
+                logger.error("Failed to initialize database: %s", e, exc_info=True)
+                raise
+            except Exception as e:
+                logger.error("Failed to initialize database: %s", e, exc_info=True)
+                raise
+
+    def _identity_portability_enabled(self) -> bool:
+        """Return True when distributed-auth Phase 1 features are enabled."""
+        try:
+            return bool(
+                getattr(getattr(self.config, 'security', None), 'identity_portability_enabled', False)
+            )
+        except Exception:
+            return False
+
+    def _ensure_identity_portability_schema(self, conn: sqlite3.Connection) -> None:
+        """Ensure additive schema needed for identity portability is present."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS mesh_principals (
+                principal_id TEXT PRIMARY KEY,
+                display_name TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                origin_peer TEXT NOT NULL,
+                status TEXT DEFAULT 'active',
+                metadata_json TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_mesh_principals_origin
+                ON mesh_principals(origin_peer);
+            CREATE INDEX IF NOT EXISTS idx_mesh_principals_status
+                ON mesh_principals(status);
+
+            CREATE TABLE IF NOT EXISTS mesh_principal_keys (
+                id TEXT PRIMARY KEY,
+                principal_id TEXT NOT NULL,
+                key_type TEXT NOT NULL,
+                key_data TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                revoked_at TIMESTAMP,
+                metadata_json TEXT,
+                FOREIGN KEY (principal_id) REFERENCES mesh_principals(principal_id) ON DELETE CASCADE,
+                UNIQUE(principal_id, key_type, key_data)
+            );
+            CREATE INDEX IF NOT EXISTS idx_mesh_principal_keys_principal
+                ON mesh_principal_keys(principal_id);
+            CREATE INDEX IF NOT EXISTS idx_mesh_principal_keys_type
+                ON mesh_principal_keys(key_type);
+            CREATE INDEX IF NOT EXISTS idx_mesh_principal_keys_revoked
+                ON mesh_principal_keys(revoked_at);
+
+            CREATE TABLE IF NOT EXISTS mesh_principal_links (
+                principal_id TEXT NOT NULL,
+                local_user_id TEXT NOT NULL,
+                linked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                linked_by TEXT,
+                source TEXT DEFAULT 'local',
+                PRIMARY KEY (principal_id, local_user_id),
+                FOREIGN KEY (principal_id) REFERENCES mesh_principals(principal_id) ON DELETE CASCADE,
+                FOREIGN KEY (local_user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_mesh_principal_links_user
+                ON mesh_principal_links(local_user_id);
+
+            CREATE TABLE IF NOT EXISTS mesh_bootstrap_grants (
+                grant_id TEXT PRIMARY KEY,
+                principal_id TEXT NOT NULL,
+                granted_role TEXT DEFAULT 'user',
+                audience_peer TEXT,
+                max_uses INTEGER DEFAULT 1,
+                uses_consumed INTEGER DEFAULT 0,
+                expires_at TIMESTAMP NOT NULL,
+                created_by TEXT NOT NULL,
+                issuer_peer_id TEXT NOT NULL,
+                issued_at TIMESTAMP NOT NULL,
+                signature TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                status TEXT DEFAULT 'active',
+                revoked_at TIMESTAMP,
+                revoked_reason TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (principal_id) REFERENCES mesh_principals(principal_id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_mesh_bootstrap_grants_status
+                ON mesh_bootstrap_grants(status);
+            CREATE INDEX IF NOT EXISTS idx_mesh_bootstrap_grants_expires
+                ON mesh_bootstrap_grants(expires_at);
+            CREATE INDEX IF NOT EXISTS idx_mesh_bootstrap_grants_principal
+                ON mesh_bootstrap_grants(principal_id);
+            CREATE INDEX IF NOT EXISTS idx_mesh_bootstrap_grants_issuer
+                ON mesh_bootstrap_grants(issuer_peer_id);
+
+            CREATE TABLE IF NOT EXISTS mesh_bootstrap_grant_applications (
+                grant_id TEXT NOT NULL,
+                local_user_id TEXT NOT NULL,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                applied_by TEXT,
+                source_peer TEXT,
+                PRIMARY KEY (grant_id, local_user_id),
+                FOREIGN KEY (grant_id) REFERENCES mesh_bootstrap_grants(grant_id) ON DELETE CASCADE,
+                FOREIGN KEY (local_user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_mesh_grant_applications_user
+                ON mesh_bootstrap_grant_applications(local_user_id);
+
+            CREATE TABLE IF NOT EXISTS mesh_bootstrap_grant_revocations (
+                grant_id TEXT PRIMARY KEY,
+                issuer_peer_id TEXT NOT NULL,
+                revoked_at TIMESTAMP NOT NULL,
+                reason TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS mesh_principal_audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                principal_id TEXT,
+                grant_id TEXT,
+                action TEXT NOT NULL,
+                source_peer TEXT,
+                actor_user_id TEXT,
+                details_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_mesh_principal_audit_principal
+                ON mesh_principal_audit_log(principal_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_mesh_principal_audit_grant
+                ON mesh_principal_audit_log(grant_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_mesh_principal_audit_action
+                ON mesh_principal_audit_log(action, created_at DESC);
+        """)
+
+    def _run_migrations(self, conn: sqlite3.Connection) -> None:
+        """Run database migrations for schema updates on existing databases."""
+        try:
+            # Check if users table has password_hash column
+            cursor = conn.execute("PRAGMA table_info(users)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            if 'password_hash' not in columns:
+                logger.info("Migration: Adding password_hash column to users table")
+                conn.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+            
+            if 'display_name' not in columns:
+                logger.info("Migration: Adding display_name column to users table")
+                conn.execute("ALTER TABLE users ADD COLUMN display_name TEXT")
+
+            if 'account_type' not in columns:
+                logger.info("Migration: Adding account_type column to users table")
+                conn.execute("ALTER TABLE users ADD COLUMN account_type TEXT DEFAULT 'human'")
+
+            if 'status' not in columns:
+                logger.info("Migration: Adding status column to users table")
+                conn.execute("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'")
+
+            if 'origin_peer' not in columns:
+                logger.info("Migration: Adding origin_peer column to users table")
+                conn.execute("ALTER TABLE users ADD COLUMN origin_peer TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_users_origin_peer ON users(origin_peer)")
+
+            if 'agent_directives' not in columns:
+                logger.info("Migration: Adding agent_directives column to users table")
+                conn.execute("ALTER TABLE users ADD COLUMN agent_directives TEXT")
+
+            # Seed role-specific directives for core agent accounts when unset.
+            # Keep this lightweight and advisory (not hard policy).
+            _seed_directives = {
+                'execution_lead': (
+                    "Use structured tools by default for coordination. "
+                    "Prefer [objective], [request], [handoff], [signal], and [circle] over free-text planning. "
+                    "For execution updates, include owner, next action, and due signal. "
+                    "Escalate security/privacy risks immediately in #general."
+                ),
+                'execution_agent': (
+                    "Prioritize reliability and implementation rigor. "
+                    "When proposing code changes, publish a [request] or [objective] first, then post concise status updates. "
+                    "Use mentions only for explicit handoffs or blockers."
+                ),
+                'coordination_agent': (
+                    "Act as integration coordinator across agents. "
+                    "Convert ambiguous asks into structured [request] blocks with required_output and due. "
+                    "Route decisions through [circle] entries, then publish a final [handoff] with owner and acceptance criteria."
+                ),
+            }
+            for _uname, _directive in _seed_directives.items():
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET agent_directives = ?
+                    WHERE lower(username) = ?
+                      AND (agent_directives IS NULL OR trim(agent_directives) = '')
+                    """,
+                    (_directive, _uname),
+                )
+
+            # --- Messages: add edited_at for message updates ---
+            cursor = conn.execute("PRAGMA table_info(messages)")
+            msg_columns = [row[1] for row in cursor.fetchall()]
+            if 'edited_at' not in msg_columns:
+                logger.info("Migration: Adding edited_at column to messages")
+                conn.execute("ALTER TABLE messages ADD COLUMN edited_at TIMESTAMP")
+
+            # --- Feed posts: add source classification columns ---
+            cursor = conn.execute("PRAGMA table_info(feed_posts)")
+            feed_columns = [row[1] for row in cursor.fetchall()]
+            
+            if 'source_type' not in feed_columns:
+                logger.info("Migration: Adding source_type column to feed_posts")
+                conn.execute("ALTER TABLE feed_posts ADD COLUMN source_type TEXT DEFAULT 'human'")
+            
+            if 'source_agent_id' not in feed_columns:
+                logger.info("Migration: Adding source_agent_id column to feed_posts")
+                conn.execute("ALTER TABLE feed_posts ADD COLUMN source_agent_id TEXT DEFAULT NULL")
+            
+            if 'source_url' not in feed_columns:
+                logger.info("Migration: Adding source_url column to feed_posts")
+                conn.execute("ALTER TABLE feed_posts ADD COLUMN source_url TEXT DEFAULT NULL")
+            
+            if 'tags' not in feed_columns:
+                logger.info("Migration: Adding tags column to feed_posts")
+                conn.execute("ALTER TABLE feed_posts ADD COLUMN tags TEXT DEFAULT NULL")
+
+            if 'expires_at' not in feed_columns:
+                logger.info("Migration: Adding expires_at column to feed_posts")
+                conn.execute("ALTER TABLE feed_posts ADD COLUMN expires_at TIMESTAMP")
+                # Backfill existing posts with the default quarterly retention (90 days)
+                conn.execute("""
+                    UPDATE feed_posts
+                    SET expires_at = datetime(created_at, '+90 days')
+                    WHERE expires_at IS NULL
+                """)
+
+            # Ensure expiry index exists (safe to run repeatedly)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_feed_posts_expires_at ON feed_posts(expires_at)")
+
+            # Migration: Add last_activity_at for feed reply resurfacing
+            if 'last_activity_at' not in feed_columns:
+                logger.info("Migration: Adding last_activity_at column to feed_posts")
+                conn.execute("ALTER TABLE feed_posts ADD COLUMN last_activity_at TIMESTAMP")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_feed_posts_last_activity ON feed_posts(last_activity_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_feed_posts_visibility ON feed_posts(visibility)")
+            if 'status' in feed_columns:
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_feed_posts_status ON feed_posts(status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_post_permissions_user ON post_permissions(user_id)")
+
+            cursor = conn.execute("PRAGMA table_info(user_feed_preferences)")
+            user_feed_pref_columns = [row[1] for row in cursor.fetchall()]
+            if 'last_viewed_at' not in user_feed_pref_columns:
+                logger.info("Migration: Adding last_viewed_at column to user_feed_preferences")
+                conn.execute("ALTER TABLE user_feed_preferences ADD COLUMN last_viewed_at TIMESTAMP")
+
+            # channel_messages is created by ChannelManager — only add index if table exists
+            cm_exists = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='channel_messages'"
+            ).fetchone()
+            if cm_exists:
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_channel_messages_thread_id ON channel_messages(thread_id)")
+
+            # One-time retention hardening migration:
+            # Convert legacy evergreen content (expires_at IS NULL) into
+            # bounded retention so content growth remains finite.
+            retention_migration_key = 'retention_policy_bounded_v1'
+            retention_marker = conn.execute(
+                "SELECT value FROM system_state WHERE key = ?",
+                (retention_migration_key,),
+            ).fetchone()
+            if retention_marker is None:
+                logger.info("Migration: Converting legacy no-expiry content to bounded retention")
+                conn.execute("""
+                    UPDATE feed_posts
+                    SET expires_at = datetime(COALESCE(created_at, CURRENT_TIMESTAMP), '+365 days')
+                    WHERE expires_at IS NULL
+                """)
+                if cm_exists:
+                    conn.execute("""
+                        UPDATE channel_messages
+                        SET expires_at = datetime(COALESCE(created_at, CURRENT_TIMESTAMP), '+365 days')
+                        WHERE expires_at IS NULL
+                    """)
+                conn.execute(
+                    "INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                    (retention_migration_key, datetime.now(timezone.utc).isoformat()),
+                )
+
+            # Migration: Add violated_at column to delete_signals
+            cursor = conn.execute("PRAGMA table_info(delete_signals)")
+            ds_columns = [row[1] for row in cursor.fetchall()]
+            if 'violated_at' not in ds_columns:
+                logger.info("Migration: Adding violated_at column to delete_signals")
+                conn.execute("ALTER TABLE delete_signals ADD COLUMN violated_at TIMESTAMP")
+            if 'rejected_at' not in ds_columns:
+                logger.info("Migration: Adding rejected_at column to delete_signals")
+                conn.execute("ALTER TABLE delete_signals ADD COLUMN rejected_at TIMESTAMP")
+
+            # Migration: instance_owner_id in system_state (single source of truth for admin)
+            cursor = conn.execute("SELECT value FROM system_state WHERE key = 'instance_owner_id'")
+            if cursor.fetchone() is None:
+                first = conn.execute(
+                    "SELECT id FROM users WHERE password_hash IS NOT NULL ORDER BY created_at ASC LIMIT 1"
+                ).fetchone()
+                if first:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES ('instance_owner_id', ?, CURRENT_TIMESTAMP)",
+                        (first['id'],)
+                    )
+                    logger.info("Migration: Set instance_owner_id to first registered user")
+
+            # Migration: agent_presence table (0.4.0) for presence badges
+            ap_exists = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_presence'"
+            ).fetchone()
+            if not ap_exists:
+                logger.info("Migration: Creating agent_presence table")
+                conn.executescript("""
+                    CREATE TABLE IF NOT EXISTS agent_presence (
+                        user_id TEXT PRIMARY KEY,
+                        last_checkin_at TIMESTAMP NOT NULL,
+                        last_source TEXT,
+                        updated_at TIMESTAMP NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_agent_presence_checkin
+                        ON agent_presence(last_checkin_at);
+                """)
+
+            ars_exists = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_runtime_state'"
+            ).fetchone()
+            if not ars_exists:
+                logger.info("Migration: Creating agent_runtime_state table")
+                conn.executescript("""
+                    CREATE TABLE IF NOT EXISTS agent_runtime_state (
+                        user_id TEXT PRIMARY KEY,
+                        last_event_fetch_at TIMESTAMP,
+                        last_event_cursor_seen INTEGER,
+                        last_inbox_fetch_at TIMESTAMP,
+                        updated_at TIMESTAMP NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_agent_runtime_event_fetch
+                        ON agent_runtime_state(last_event_fetch_at);
+                    CREATE INDEX IF NOT EXISTS idx_agent_runtime_inbox_fetch
+                        ON agent_runtime_state(last_inbox_fetch_at);
+                """)
+
+            aess_exists = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_event_subscription_state'"
+            ).fetchone()
+            if not aess_exists:
+                logger.info("Migration: Creating agent_event_subscription_state table")
+                conn.executescript("""
+                    CREATE TABLE IF NOT EXISTS agent_event_subscription_state (
+                        user_id TEXT PRIMARY KEY,
+                        custom_enabled INTEGER NOT NULL DEFAULT 0,
+                        updated_at TIMESTAMP NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_agent_event_subscription_state_enabled
+                        ON agent_event_subscription_state(custom_enabled, updated_at);
+                """)
+
+            aes_exists = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_event_subscriptions'"
+            ).fetchone()
+            if not aes_exists:
+                logger.info("Migration: Creating agent_event_subscriptions table")
+                conn.executescript("""
+                    CREATE TABLE IF NOT EXISTS agent_event_subscriptions (
+                        user_id TEXT NOT NULL,
+                        event_type TEXT NOT NULL,
+                        updated_at TIMESTAMP NOT NULL,
+                        PRIMARY KEY (user_id, event_type)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_agent_event_subscriptions_user
+                        ON agent_event_subscriptions(user_id, updated_at);
+                """)
+
+            cursor = conn.execute("PRAGMA table_info(agent_inbox)")
+            inbox_columns = {row[1] for row in cursor.fetchall()}
+            if "seen_at" not in inbox_columns:
+                logger.info("Migration: Adding seen_at column to agent_inbox")
+                conn.execute("ALTER TABLE agent_inbox ADD COLUMN seen_at TIMESTAMP")
+            if "completed_at" not in inbox_columns:
+                logger.info("Migration: Adding completed_at column to agent_inbox")
+                conn.execute("ALTER TABLE agent_inbox ADD COLUMN completed_at TIMESTAMP")
+            if "completion_ref_json" not in inbox_columns:
+                logger.info("Migration: Adding completion_ref_json column to agent_inbox")
+                conn.execute("ALTER TABLE agent_inbox ADD COLUMN completion_ref_json TEXT")
+
+            logger.info("Migration: Normalizing legacy handled inbox rows")
+            conn.execute(
+                """
+                UPDATE agent_inbox
+                SET status = 'completed',
+                    seen_at = COALESCE(seen_at, handled_at, created_at),
+                    completed_at = COALESCE(completed_at, handled_at)
+                WHERE status = 'handled'
+                """
+            )
+
+            # Migration: content_contexts table for best-effort extracted text context
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS content_contexts (
+                    id TEXT PRIMARY KEY,
+                    source_type TEXT NOT NULL,
+                    source_id TEXT,
+                    source_url TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    owner_user_id TEXT NOT NULL,
+                    title TEXT,
+                    author TEXT,
+                    transcript_lang TEXT,
+                    transcript_text TEXT,
+                    extracted_text TEXT,
+                    summary_text TEXT,
+                    owner_note TEXT,
+                    status TEXT DEFAULT 'ready',
+                    error TEXT,
+                    metadata TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(source_type, source_id, source_url, owner_user_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_content_contexts_source
+                    ON content_contexts(source_type, source_id, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_content_contexts_owner
+                    ON content_contexts(owner_user_id, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_content_contexts_url
+                    ON content_contexts(source_url);
+            """)
+
+            if self._identity_portability_enabled():
+                self._ensure_identity_portability_schema(conn)
+
+            # --- Trust scores: add manually_penalized column ---
+            trust_cursor = conn.execute("PRAGMA table_info(trust_scores)")
+            trust_columns = [row[1] for row in trust_cursor.fetchall()]
+            if 'manually_penalized' not in trust_columns:
+                logger.info("Migration: Adding manually_penalized column to trust_scores")
+                conn.execute("ALTER TABLE trust_scores ADD COLUMN manually_penalized BOOLEAN NOT NULL DEFAULT 0")
+
+            conn.commit()
+        except Exception as e:
+            logger.critical(
+                f"Database migration failed: {e}. "
+                "Refusing to start with an inconsistent schema. "
+                "Restore from backup or delete the database file to rebuild."
+            )
+            raise RuntimeError(f"Database migration failed: {e}") from e
+
+    def _configure_resilience(self) -> None:
+        """Enable WAL mode, run integrity check, and create startup backup."""
+        try:
+            with self.get_connection() as conn:
+                # Enable WAL mode for better concurrency and crash resilience
+                mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()
+                logger.info(f"SQLite journal mode: {mode[0] if mode else 'unknown'}")
+
+                # Quick integrity check — 'ok' means no corruption
+                result = conn.execute("PRAGMA quick_check").fetchone()
+                status = result[0] if result else 'unknown'
+                if status == 'ok':
+                    logger.info("Database integrity check: OK")
+                else:
+                    logger.critical(
+                        f"DATABASE INTEGRITY CHECK FAILED: {status}. "
+                        "Canopy will not start with a corrupted database. "
+                        "Restore from a backup in the data/devices/ directory."
+                    )
+                    raise RuntimeError(f"Database integrity check failed: {status}")
+        except Exception as e:
+            logger.error(f"Database resilience configuration failed: {e}")
+
+        # Create a startup backup so we can recover from bad migrations
+        try:
+            self.backup_database(suffix='startup')
+        except Exception as e:
+            logger.warning(f"Startup backup failed (non-fatal): {e}")
+
+    def _start_checkpoint_thread(self):
+        """Start a background thread that periodically checkpoints WAL."""
+        if self._checkpoint_thread and self._checkpoint_thread.is_alive():
+            return
+        self._checkpoint_stop.clear()
+        self._checkpoint_thread = threading.Thread(
+            target=self._checkpoint_loop,
+            name='canopy-wal-checkpoint',
+            daemon=True,
+        )
+        self._checkpoint_thread.start()
+        logger.info(f"WAL checkpoint thread started (interval={self._checkpoint_interval}s)")
+
+    def _checkpoint_loop(self):
+        """Periodically run WAL checkpoint to prevent unbounded growth."""
+        while not self._checkpoint_stop.wait(timeout=self._checkpoint_interval):
+            try:
+                conn = self._open_connection(busy_timeout_ms=5000)
+                try:
+                    result = conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+                    if result:
+                        logger.debug(f"WAL checkpoint: busy={result[0]}, log={result[1]}, checkpointed={result[2]}")
+                finally:
+                    conn.close()
+            except Exception as e:
+                logger.warning(f"WAL checkpoint failed (non-fatal): {e}")
+
+    def stop_checkpoint_thread(self):
+        """Stop the WAL checkpoint background thread."""
+        self._checkpoint_stop.set()
+        if self._checkpoint_thread:
+            self._checkpoint_thread.join(timeout=5)
+            self._checkpoint_thread = None
+
+    def _get_pooled_connection(self, busy_timeout_ms: int = 3000) -> sqlite3.Connection:
+        """Get or create a thread-local pooled connection."""
+        conn = getattr(self._local, 'conn', None)
+        if conn is not None:
+            try:
+                conn.execute("SELECT 1")
+                with self._pool_lock:
+                    self._pool_stats['reused'] += 1
+                return cast(sqlite3.Connection, conn)
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                self._local.conn = None
+
+        conn = self._open_connection(busy_timeout_ms=busy_timeout_ms)
+        self._local.conn = conn
+        with self._pool_lock:
+            self._pool_stats['created'] += 1
+        return conn
+
+    def close_pooled_connection(self):
+        """Close this thread's pooled connection (call on thread shutdown)."""
+        conn = getattr(self._local, 'conn', None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            self._local.conn = None
+            with self._pool_lock:
+                self._pool_stats['closed'] += 1
+
+    def get_pool_stats(self) -> dict:
+        """Return connection pool statistics."""
+        with self._pool_lock:
+            return dict(self._pool_stats)
+
+    def backup_database(self, suffix: str = 'backup') -> Optional[Path]:
+        """Create a backup copy of the database file.
+
+        Returns the path to the backup file, or None on failure.
+        The backup uses SQLite's built-in backup API for a
+        consistent snapshot even while the DB is in use.
+        """
+        import shutil
+        from datetime import datetime as _dt
+
+        ts = _dt.now().strftime('%Y%m%d_%H%M%S')
+        backup_path = self.db_path.parent / f"{self.db_path.stem}_{suffix}_{ts}.db"
+
+        try:
+            # For small DBs a simple file copy is fine.
+            # SQLite WAL mode flushes before copy so this is safe.
+            src = sqlite3.connect(str(self.db_path))
+            dst = sqlite3.connect(str(backup_path))
+            src.backup(dst)
+            dst.close()
+            src.close()
+
+            # Keep at most 3 backups with this suffix
+            pattern = f"{self.db_path.stem}_{suffix}_*.db"
+            backups = sorted(self.db_path.parent.glob(pattern))
+            while len(backups) > 3:
+                oldest = backups.pop(0)
+                try:
+                    oldest.unlink()
+                    logger.debug(f"Removed old backup: {oldest.name}")
+                except Exception:
+                    pass
+
+            logger.info(f"Database backed up to {backup_path.name}")
+            return backup_path.resolve()
+        except Exception as e:
+            logger.error(f"Database backup failed: {e}")
+            # Clean up partial backup
+            if backup_path.exists():
+                try:
+                    backup_path.unlink()
+                except Exception:
+                    pass
+            return None
+
+    def _open_connection(self, busy_timeout_ms: int = 3000) -> sqlite3.Connection:
+        """Open a new SQLite connection with resilience settings.
+
+        Uses WAL journal mode for better concurrency.  *busy_timeout_ms*
+        controls how long SQLite waits for a write lock before raising
+        ``database is locked``.  Keep this short (default 3 s) so that
+        read-heavy paths (AJAX rendering) fail fast and let per-message
+        error handlers catch it, rather than accumulating 30 s waits per
+        message.
+        """
+        conn = sqlite3.connect(
+            self.db_path,
+            timeout=busy_timeout_ms / 1000.0,
+            check_same_thread=False,
+        )
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
+        return conn
+
+    @contextmanager
+    def get_connection(self, busy_timeout_ms: Optional[int] = None, use_pool: bool = False) -> Any:
+        """Get a database connection with proper error handling.
+
+        Uses WAL journal mode. busy_timeout_ms controls how long SQLite waits
+        for a lock (default 3000). Use a longer value (e.g. 30000) for startup.
+
+        If *use_pool* is True, the connection is reused across calls on the
+        same thread (thread-local pooling).  Pooled connections are NOT closed
+        on context-manager exit — call close_pooled_connection() explicitly
+        when the thread is shutting down.
+        """
+        conn = None
+        timeout = busy_timeout_ms if busy_timeout_ms is not None else 3000
+        pooled = False
+        try:
+            if use_pool:
+                conn = self._get_pooled_connection(busy_timeout_ms=timeout)
+                pooled = True
+            else:
+                logger.debug(f"Connecting to database: {self.db_path}")
+                conn = self._open_connection(busy_timeout_ms=timeout)
+                logger.debug("Database connection established successfully")
+            yield conn
+
+        except sqlite3.OperationalError as e:
+            if conn and not pooled:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
+            if "duplicate column name" in str(e).lower():
+                logger.debug(f"Database operational info: {e}")
+            else:
+                logger.error(f"Database operational error: {e}")
+                logger.error(f"Database path exists: {self.db_path.exists()}")
+                logger.error(f"Database directory writable: {self.db_path.parent.is_dir() and os.access(self.db_path.parent, os.W_OK)}")
+            raise
+        except Exception as e:
+            if conn and not pooled:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            logger.error(f"Database error: {e}", exc_info=True)
+            raise
+        finally:
+            if conn and not pooled:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                logger.debug("Database connection closed")
+    
+    # User management methods
+    def create_user(self, user_id: str, username: str, public_key: str,
+                    password_hash: Optional[str] = None, display_name: Optional[str] = None,
+                    account_type: str = 'human', status: str = 'active',
+                    origin_peer: Optional[str] = None) -> bool:
+        """Create a new user in the database."""
+        try:
+            with self.get_connection() as conn:
+                conn.execute("""
+                    INSERT INTO users (id, username, public_key, password_hash, display_name, account_type, status, origin_peer)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (user_id, username, public_key, password_hash, display_name or username, account_type, status, origin_peer))
+                conn.commit()
+                logger.info(f"Created user: {username}")
+                return True
+        except sqlite3.IntegrityError as e:
+            logger.error(f"User creation failed: {e}")
+            return False
+    
+    def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Get user by ID."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM users WHERE id = ?", (user_id,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+    
+    def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        """Get user by username (for login)."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM users WHERE username = ?", (username,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+    
+    def get_all_registered_users(self) -> List[Dict[str, Any]]:
+        """Get all users that have passwords (registered accounts, not system users)."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT id, username, display_name, created_at FROM users WHERE password_hash IS NOT NULL ORDER BY created_at"
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_all_users_for_admin(self) -> List[Dict[str, Any]]:
+        """Get all non-system users for admin UI, including shadow/remote rows."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id, username, display_name, account_type, status, agent_directives,
+                       origin_peer, created_at, password_hash, public_key
+                FROM users
+                WHERE id NOT IN ('system', 'local_user')
+                ORDER BY created_at
+                """
+            )
+            rows = []
+            for raw in cursor.fetchall():
+                row = dict(raw)
+                password_hash = str(row.pop('password_hash') or '').strip()
+                public_key = str(row.pop('public_key') or '').strip()
+                row['is_registered'] = bool(password_hash)
+                row['has_public_key'] = bool(public_key)
+                row['is_remote'] = bool(str(row.get('origin_peer') or '').strip())
+                row['is_shadow'] = bool(row['is_remote'] and not row['is_registered'])
+                row['account_type'] = (row.get('account_type') or 'human')
+                row['status'] = (row.get('status') or 'active')
+                rows.append(row)
+            return rows
+
+    def set_user_agent_directives(self, user_id: str, directives: Optional[str]) -> bool:
+        """Set custom agent directives for a user (or clear with None)."""
+        try:
+            with self.get_connection() as conn:
+                cur = conn.execute(
+                    """
+                    UPDATE users
+                    SET agent_directives = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (directives, user_id),
+                )
+                conn.commit()
+                return cast(int, cur.rowcount) > 0
+        except Exception as e:
+            logger.error(f"Failed to set user agent directives: {e}")
+            return False
+
+    def get_system_state(self, key: str) -> Optional[str]:
+        """Return value for a system_state key, or None."""
+        with self.get_connection() as conn:
+            cursor = conn.execute("SELECT value FROM system_state WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            return row['value'] if row else None
+
+    def set_system_state(self, key: str, value: Optional[str]) -> bool:
+        """Set (or clear) a system_state key. Use value=None to delete."""
+        try:
+            with self.get_connection() as conn:
+                if value is None or value == '':
+                    conn.execute("DELETE FROM system_state WHERE key = ?", (key,))
+                else:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                        (key, value)
+                    )
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"set_system_state failed: {e}")
+            return False
+
+    def get_instance_owner_user_id(self) -> Optional[str]:
+        """Return the user_id of the instance owner (admin).
+
+        Stored in system_state. If missing (or pointing at a likely shadow/remote
+        account), self-heal to a plausible local registered account.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.execute("SELECT value FROM system_state WHERE key = 'instance_owner_id'")
+            row = cursor.fetchone()
+            if row and row['value']:
+                owner_id = cast(str, row['value'])
+                owner_row = conn.execute(
+                    "SELECT id, username, public_key, password_hash, status FROM users WHERE id = ?",
+                    (owner_id,),
+                ).fetchone()
+                if owner_row:
+                    username = (owner_row['username'] or '').strip().lower()
+                    has_public_key = bool((owner_row['public_key'] or '').strip())
+                    has_password = bool((owner_row['password_hash'] or '').strip())
+                    is_active = (owner_row['status'] or 'active') == 'active'
+                    # A persisted owner should be a real local account, not a
+                    # synthetic shadow user (often peer-* with empty public_key).
+                    looks_like_shadow = username.startswith('peer-') and not has_public_key
+                    if has_password and is_active and not looks_like_shadow:
+                        return owner_id
+
+            # Backward compat / recovery: choose first plausible local registered user.
+            cursor = conn.execute(
+                "SELECT id, username, public_key FROM users "
+                "WHERE password_hash IS NOT NULL AND password_hash != '' "
+                "AND COALESCE(status, 'active') = 'active' "
+                "ORDER BY created_at ASC"
+            )
+            first = None
+            for candidate in cursor.fetchall():
+                username = (candidate['username'] or '').strip().lower()
+                has_public_key = bool((candidate['public_key'] or '').strip())
+                # Prefer non-shadow rows; allow legacy local rows without public keys
+                # if username is not synthetic peer-*.
+                if username.startswith('peer-') and not has_public_key:
+                    continue
+                first = candidate
+                break
+
+            # Last-resort: if everything looks shadowed, keep old behavior
+            # but still exclude users whose username starts with 'peer-' to
+            # prevent a shadow/relay account from being elevated to admin.
+            if not first:
+                first = conn.execute(
+                    "SELECT id FROM users WHERE password_hash IS NOT NULL AND password_hash != '' "
+                    "AND username NOT LIKE 'peer-%' "
+                    "ORDER BY created_at ASC LIMIT 1"
+                ).fetchone()
+
+            if first:
+                conn.execute(
+                    "INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES ('instance_owner_id', ?, CURRENT_TIMESTAMP)",
+                    (first['id'],)
+                )
+                conn.commit()
+                return cast(str, first['id'])
+            return None
+
+    def set_instance_owner_user_id(self, user_id: Optional[str]) -> bool:
+        """Set the instance owner (admin). Pass None to clear (e.g. for recovery)."""
+        return self.set_system_state('instance_owner_id', user_id or None)
+
+    def get_pending_approval_count(self) -> int:
+        """Return count of users with status pending_approval (for admin badge)."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) AS n FROM users WHERE status = 'pending_approval'"
+                )
+                row = cursor.fetchone()
+                return row['n'] if row else 0
+        except Exception:
+            return 0
+
+    def set_user_status(self, user_id: str, status: str) -> bool:
+        """Set a user's status (active, pending_approval, suspended)."""
+        if status not in ('active', 'pending_approval', 'suspended'):
+            return False
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.execute(
+                    "UPDATE users SET status = ? WHERE id = ?", (status, user_id)
+                )
+                conn.commit()
+                return cast(int, cursor.rowcount) > 0
+        except Exception as e:
+            logger.error(f"Failed to set user status: {e}")
+            return False
+
+    def update_user_admin_fields(
+        self,
+        user_id: str,
+        *,
+        account_type: Optional[str] = None,
+        status: Optional[str] = None,
+        display_name: Optional[str] = None,
+    ) -> bool:
+        """Admin-safe update for core user classification fields."""
+        set_parts: list[str] = []
+        params: list[Any] = []
+
+        if account_type is not None:
+            account_type_clean = str(account_type).strip().lower()
+            if account_type_clean not in ('human', 'agent'):
+                return False
+            set_parts.append("account_type = ?")
+            params.append(account_type_clean)
+
+        if status is not None:
+            status_clean = str(status).strip().lower()
+            if status_clean not in ('active', 'pending_approval', 'suspended'):
+                return False
+            set_parts.append("status = ?")
+            params.append(status_clean)
+
+        if display_name is not None:
+            display_name_clean = str(display_name).strip()
+            if len(display_name_clean) > 100:
+                return False
+            set_parts.append("display_name = ?")
+            params.append(display_name_clean or None)
+
+        if not set_parts:
+            return False
+
+        set_parts.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(user_id)
+        query = f"UPDATE users SET {', '.join(set_parts)} WHERE id = ?"
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.execute(query, tuple(params))
+                conn.commit()
+                return cast(int, cursor.rowcount) > 0
+        except Exception as e:
+            logger.error(f"Failed to update admin user fields: {e}")
+            return False
+
+    @staticmethod
+    def _remote_shadow_identity_value(row: Dict[str, Any]) -> str:
+        return str(row.get('display_name') or row.get('username') or row.get('id') or '').strip()
+
+    @staticmethod
+    def _sort_timestamp_value(raw: Any) -> float:
+        value = str(raw or '').strip()
+        if not value:
+            return 0.0
+        try:
+            return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+        except Exception:
+            pass
+        for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f'):
+            try:
+                return datetime.strptime(value, fmt).timestamp()
+            except Exception:
+                continue
+        return 0.0
+
+    @staticmethod
+    def _is_placeholder_shadow_username(username: str, user_id: str) -> bool:
+        uname = str(username or '').strip().lower()
+        uid = str(user_id or '').strip().lower()
+        return bool(uname) and (uname.startswith('peer-') or uname == uid)
+
+    @staticmethod
+    def _safe_table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+        try:
+            rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        except Exception:
+            return set()
+        names: set[str] = set()
+        for row in rows or []:
+            if hasattr(row, 'keys') and 'name' in row.keys():
+                names.add(str(row['name']))
+            elif len(row) > 1:
+                names.add(str(row[1]))
+        return names
+
+    def _collect_shadow_user_reference_counts(
+        self,
+        conn: sqlite3.Connection,
+        user_id: str,
+    ) -> Dict[str, int]:
+        result = self._batch_collect_shadow_user_reference_counts(conn, [user_id])
+        return result.get(
+            user_id,
+            {
+                'channels_created': 0,
+                'channel_memberships': 0,
+                'channel_messages': 0,
+                'uploads': 0,
+                'direct_messages_sent': 0,
+                'feed_posts': 0,
+                'total': 0,
+            },
+        )
+
+    def _batch_collect_shadow_user_reference_counts(
+        self,
+        conn: sqlite3.Connection,
+        user_ids: List[str],
+    ) -> Dict[str, Dict[str, int]]:
+        """Fetch reference counts for multiple users with bounded queries."""
+        ids = [str(user_id or '').strip() for user_id in (user_ids or []) if str(user_id or '').strip()]
+        if not ids:
+            return {}
+
+        placeholders = ','.join('?' for _ in ids)
+        result: Dict[str, Dict[str, int]] = {
+            user_id: {
+                'channels_created': 0,
+                'channel_memberships': 0,
+                'channel_messages': 0,
+                'uploads': 0,
+                'direct_messages_sent': 0,
+                'feed_posts': 0,
+                'total': 0,
+            }
+            for user_id in ids
+        }
+        tracked = [
+            ('channels_created', f'SELECT created_by, COUNT(*) FROM channels WHERE created_by IN ({placeholders}) GROUP BY created_by'),
+            ('channel_memberships', f'SELECT user_id, COUNT(*) FROM channel_members WHERE user_id IN ({placeholders}) GROUP BY user_id'),
+            ('channel_messages', f'SELECT user_id, COUNT(*) FROM channel_messages WHERE user_id IN ({placeholders}) GROUP BY user_id'),
+            ('uploads', f'SELECT uploaded_by, COUNT(*) FROM files WHERE uploaded_by IN ({placeholders}) GROUP BY uploaded_by'),
+            ('direct_messages_sent', f'SELECT sender_id, COUNT(*) FROM messages WHERE sender_id IN ({placeholders}) GROUP BY sender_id'),
+            ('feed_posts', f'SELECT author_id, COUNT(*) FROM feed_posts WHERE author_id IN ({placeholders}) GROUP BY author_id'),
+        ]
+        for key, query in tracked:
+            try:
+                for row in conn.execute(query, ids).fetchall():
+                    row_user_id = str(row[0] or '').strip()
+                    if row_user_id in result:
+                        result[row_user_id][key] = int(row[1] or 0)
+            except Exception:
+                continue
+        for counts in result.values():
+            counts['total'] = (
+                counts['channels_created']
+                + counts['channel_memberships']
+                + counts['channel_messages']
+                + counts['uploads']
+                + counts['direct_messages_sent']
+                + counts['feed_posts']
+            )
+        return result
+
+    def _remote_shadow_candidate_sort_key(
+        self,
+        row: Dict[str, Any],
+        reference_counts: Dict[str, int],
+    ) -> Tuple[Any, ...]:
+        username = str(row.get('username') or '').strip()
+        user_id = str(row.get('id') or '').strip()
+        return (
+            0 if self._sort_timestamp_value(row.get('profile_updated_at')) else 1,
+            -self._sort_timestamp_value(row.get('profile_updated_at')),
+            -int(reference_counts.get('total') or 0),
+            0 if self._sort_timestamp_value(row.get('created_at')) else 1,
+            -self._sort_timestamp_value(row.get('created_at')),
+            1 if self._is_placeholder_shadow_username(username, user_id) else 0,
+            0 if str(row.get('avatar_file_id') or '').strip() else 1,
+            username.lower(),
+            user_id,
+        )
+
+    def _fetch_remote_shadow_duplicate_group_rows(
+        self,
+        conn: sqlite3.Connection,
+        anchor_user_id: str,
+    ) -> List[Dict[str, Any]]:
+        user_cols = self._safe_table_columns(conn, 'users')
+        select_cols = [
+            'id',
+            'username',
+            'display_name',
+            'origin_peer',
+            'created_at',
+            'updated_at',
+            'password_hash',
+            'public_key',
+        ]
+        for optional_col in ('avatar_file_id', 'profile_updated_at', 'bio'):
+            if optional_col in user_cols:
+                select_cols.append(optional_col)
+        row = conn.execute(
+            f"SELECT {', '.join(select_cols)} FROM users WHERE id = ?",
+            (anchor_user_id,),
+        ).fetchone()
+        if not row:
+            return []
+        anchor = dict(row)
+        origin_peer = str(anchor.get('origin_peer') or '').strip()
+        if not origin_peer or str(anchor.get('password_hash') or '').strip():
+            return []
+        identity_value = self._remote_shadow_identity_value(anchor)
+        if not identity_value:
+            return []
+        rows = conn.execute(
+            f"""
+            SELECT {', '.join(select_cols)}
+            FROM users
+            WHERE origin_peer = ?
+              AND COALESCE(password_hash, '') = ''
+              AND lower(COALESCE(display_name, username, id)) = lower(?)
+            """,
+            (origin_peer, identity_value),
+        ).fetchall()
+        return [dict(candidate) for candidate in (rows or [])]
+
+    @staticmethod
+    def _pick_latest_timestamp(*values: Any) -> Optional[str]:
+        best_raw: Optional[str] = None
+        best_value = float('-inf')
+        for raw in values:
+            raw_value = str(raw or '').strip()
+            if not raw_value:
+                continue
+            try_value = DatabaseManager._sort_timestamp_value(raw_value)
+            if try_value > best_value:
+                best_value = try_value
+                best_raw = raw_value
+        return best_raw
+
+    @staticmethod
+    def _pick_earliest_timestamp(*values: Any) -> Optional[str]:
+        best_raw: Optional[str] = None
+        best_value: Optional[float] = None
+        for raw in values:
+            raw_value = str(raw or '').strip()
+            if not raw_value:
+                continue
+            try_value = DatabaseManager._sort_timestamp_value(raw_value)
+            if best_value is None or try_value < best_value:
+                best_value = try_value
+                best_raw = raw_value
+        return best_raw
+
+    @staticmethod
+    def _exec_optional(
+        conn: sqlite3.Connection,
+        sql: str,
+        params: tuple[Any, ...],
+    ) -> Optional[sqlite3.Cursor]:
+        try:
+            return conn.execute(sql, params)
+        except sqlite3.OperationalError as e:
+            msg = str(e).lower()
+            if "no such table" in msg or "no such column" in msg:
+                logger.debug(f"Optional cleanup skipped: {sql} ({e})")
+                return None
+            raise
+
+    def _reassign_user_reference_optional(
+        self,
+        conn: sqlite3.Connection,
+        table: str,
+        column: str,
+        source_user_id: str,
+        canonical_user_id: str,
+        *,
+        unique_conflict_safe: bool = False,
+    ) -> None:
+        clause = "UPDATE OR IGNORE" if unique_conflict_safe else "UPDATE"
+        self._exec_optional(
+            conn,
+            f"{clause} {table} SET {column} = ? WHERE {column} = ?",
+            (canonical_user_id, source_user_id),
+        )
+        if unique_conflict_safe:
+            self._exec_optional(
+                conn,
+                f"DELETE FROM {table} WHERE {column} = ?",
+                (source_user_id,),
+            )
+
+    def _merge_channel_membership_rows(
+        self,
+        conn: sqlite3.Connection,
+        source_user_id: str,
+        canonical_user_id: str,
+    ) -> None:
+        rows = self._exec_optional(
+            conn,
+            """
+            SELECT id, channel_id, role, notifications_enabled, last_read_at, joined_at
+            FROM channel_members
+            WHERE user_id = ?
+            """,
+            (source_user_id,),
+        )
+        if rows is None:
+            return
+        for row in rows.fetchall():
+            existing = conn.execute(
+                """
+                SELECT id, role, notifications_enabled, last_read_at, joined_at
+                FROM channel_members
+                WHERE channel_id = ? AND user_id = ?
+                """,
+                (row['channel_id'], canonical_user_id),
+            ).fetchone()
+            if existing:
+                merged_role = 'admin' if 'admin' in {
+                    str(existing['role'] or '').strip().lower(),
+                    str(row['role'] or '').strip().lower(),
+                } else str(existing['role'] or row['role'] or 'member')
+                merged_notifications = 1 if (
+                    bool(existing['notifications_enabled']) or bool(row['notifications_enabled'])
+                ) else 0
+                merged_last_read = self._pick_latest_timestamp(
+                    existing['last_read_at'],
+                    row['last_read_at'],
+                )
+                merged_joined_at = self._pick_earliest_timestamp(
+                    existing['joined_at'],
+                    row['joined_at'],
+                )
+                conn.execute(
+                    """
+                    UPDATE channel_members
+                    SET role = ?, notifications_enabled = ?, last_read_at = ?, joined_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        merged_role,
+                        merged_notifications,
+                        merged_last_read,
+                        merged_joined_at,
+                        existing['id'],
+                    ),
+                )
+                conn.execute(
+                    "DELETE FROM channel_members WHERE id = ?",
+                    (row['id'],),
+                )
+                continue
+            conn.execute(
+                "UPDATE channel_members SET user_id = ? WHERE id = ?",
+                (canonical_user_id, row['id']),
+            )
+
+    def list_remote_shadow_duplicate_groups(self, limit: int = 200) -> List[Dict[str, Any]]:
+        """List duplicate remote-shadow identities grouped by origin peer and display identity."""
+        lim = max(1, min(int(limit or 200), 1000))
+        groups: List[Dict[str, Any]] = []
+        try:
+            with self.get_connection() as conn:
+                rows = self.get_all_users_for_admin()
+                grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+                for user in rows:
+                    if not user.get('is_remote') or not user.get('is_shadow'):
+                        continue
+                    origin_peer = str(user.get('origin_peer') or '').strip()
+                    identity_value = self._remote_shadow_identity_value(user)
+                    if not origin_peer or not identity_value:
+                        continue
+                    grouped.setdefault((origin_peer.lower(), identity_value.lower()), []).append(dict(user))
+                candidate_ids = [
+                    str(member.get('id') or '').strip()
+                    for members in grouped.values()
+                    if len(members) > 1
+                    for member in members
+                    if str(member.get('id') or '').strip()
+                ]
+                batch_counts = self._batch_collect_shadow_user_reference_counts(conn, candidate_ids)
+                for members in grouped.values():
+                    if len(members) <= 1:
+                        continue
+                    annotated: List[Dict[str, Any]] = []
+                    for member in members:
+                        ref_counts = batch_counts.get(str(member.get('id') or '').strip(), {})
+                        member['reference_counts'] = ref_counts
+                        member['reference_total'] = int(ref_counts.get('total') or 0)
+                        annotated.append(member)
+                    canonical = min(
+                        annotated,
+                        key=lambda row: self._remote_shadow_candidate_sort_key(
+                            row,
+                            cast(Dict[str, int], row.get('reference_counts') or {}),
+                        ),
+                    )
+                    groups.append(
+                        {
+                            'origin_peer': str(canonical.get('origin_peer') or '').strip(),
+                            'display_name': self._remote_shadow_identity_value(canonical),
+                            'canonical_user_id': canonical.get('id'),
+                            'canonical_username': canonical.get('username'),
+                            'duplicate_count': max(0, len(annotated) - 1),
+                            'reference_total': sum(int(m.get('reference_total') or 0) for m in annotated),
+                            'users': sorted(
+                                annotated,
+                                key=lambda row: self._remote_shadow_candidate_sort_key(
+                                    row,
+                                    cast(Dict[str, int], row.get('reference_counts') or {}),
+                                ),
+                            ),
+                        }
+                    )
+        except Exception as e:
+            logger.error(f"Failed to list remote shadow duplicate groups: {e}")
+            return []
+        groups.sort(
+            key=lambda group: (
+                -int(group.get('duplicate_count') or 0),
+                -int(group.get('reference_total') or 0),
+                str(group.get('display_name') or '').lower(),
+                str(group.get('origin_peer') or '').lower(),
+            )
+        )
+        return groups[:lim]
+
+    def _cross_peer_same_name_sort_key(self, row: Dict[str, Any]) -> Tuple[Any, ...]:
+        return (
+            0 if not bool(row.get('is_remote')) else 1,
+            0 if bool(row.get('is_registered')) else 1,
+            -int(row.get('reference_total') or 0),
+            0 if self._sort_timestamp_value(row.get('profile_updated_at')) else 1,
+            -self._sort_timestamp_value(row.get('profile_updated_at')),
+            0 if self._sort_timestamp_value(row.get('created_at')) else 1,
+            -self._sort_timestamp_value(row.get('created_at')),
+            str(row.get('username') or '').lower(),
+            str(row.get('id') or '').strip(),
+        )
+
+    def list_cross_peer_same_name_groups(self, limit: int = 200) -> List[Dict[str, Any]]:
+        """List same-name identities that span multiple peers or local/remote contexts."""
+        lim = max(1, min(int(limit or 200), 1000))
+        groups: List[Dict[str, Any]] = []
+        try:
+            with self.get_connection() as conn:
+                rows = self.get_all_users_for_admin()
+                grouped: Dict[str, List[Dict[str, Any]]] = {}
+                for user in rows:
+                    identity_value = self._remote_shadow_identity_value(user)
+                    if not identity_value:
+                        continue
+                    grouped.setdefault(identity_value.lower(), []).append(dict(user))
+                candidate_ids = [
+                    str(member.get('id') or '').strip()
+                    for members in grouped.values()
+                    for member in members
+                    if str(member.get('id') or '').strip()
+                ]
+                batch_counts = self._batch_collect_shadow_user_reference_counts(conn, candidate_ids)
+
+                for members in grouped.values():
+                    contexts = {
+                        str(member.get('origin_peer') or '').strip() or '(local)'
+                        for member in members
+                    }
+                    forgettable_count = 0
+                    annotated: List[Dict[str, Any]] = []
+                    for member in members:
+                        ref_counts = batch_counts.get(str(member.get('id') or '').strip(), {})
+                        member['reference_counts'] = ref_counts
+                        member['reference_total'] = int(ref_counts.get('total') or 0)
+                        member['is_local'] = not bool(str(member.get('origin_peer') or '').strip())
+                        member['forgettable'] = bool(member.get('is_remote') and member.get('is_shadow'))
+                        member['context_label'] = str(member.get('origin_peer') or '').strip() or 'local'
+                        if member['forgettable']:
+                            forgettable_count += 1
+                        annotated.append(member)
+                    if len(contexts) <= 1 or forgettable_count <= 0:
+                        continue
+
+                    annotated_sorted = sorted(annotated, key=self._cross_peer_same_name_sort_key)
+                    primary = annotated_sorted[0]
+                    groups.append(
+                        {
+                            'display_name': self._remote_shadow_identity_value(primary),
+                            'peer_count': len(contexts),
+                            'row_count': len(annotated_sorted),
+                            'forgettable_count': forgettable_count,
+                            'reference_total': sum(int(m.get('reference_total') or 0) for m in annotated_sorted),
+                            'users': annotated_sorted,
+                        }
+                    )
+        except Exception as e:
+            logger.error(f"Failed to list cross-peer same-name groups: {e}")
+            return []
+
+        groups.sort(
+            key=lambda group: (
+                -int(group.get('peer_count') or 0),
+                -int(group.get('forgettable_count') or 0),
+                -int(group.get('reference_total') or 0),
+                str(group.get('display_name') or '').lower(),
+            )
+        )
+        return groups[:lim]
+
+    def forget_remote_shadow_user(self, user_id: str) -> Dict[str, Any]:
+        """Delete one selected remote shadow user after validating it is safe to forget explicitly."""
+        target_user_id = str(user_id or '').strip()
+        if not target_user_id:
+            return {'success': False, 'error': 'Missing user ID'}
+        try:
+            with self.get_connection() as conn:
+                row = conn.execute(
+                    """
+                    SELECT id, username, display_name, origin_peer, password_hash
+                    FROM users
+                    WHERE id = ?
+                    """,
+                    (target_user_id,),
+                ).fetchone()
+                if not row:
+                    return {'success': False, 'error': 'Remote shadow user not found'}
+                user = dict(row)
+                origin_peer = str(user.get('origin_peer') or '').strip()
+                if not origin_peer:
+                    return {'success': False, 'error': 'Local users cannot be forgotten here'}
+                if str(user.get('password_hash') or '').strip():
+                    return {'success': False, 'error': 'Registered remote users cannot be forgotten here'}
+                ref_counts = self._collect_shadow_user_reference_counts(conn, target_user_id)
+        except Exception as e:
+            logger.error(f"Failed to prepare remote shadow delete for {target_user_id}: {e}", exc_info=True)
+            return {'success': False, 'error': 'Remote shadow delete failed'}
+
+        deleted = self.delete_user(target_user_id)
+        if not deleted:
+            return {'success': False, 'error': 'Failed to forget remote shadow user'}
+        return {
+            'success': True,
+            'deleted_user_id': target_user_id,
+            'display_name': self._remote_shadow_identity_value(user),
+            'origin_peer': origin_peer,
+            'reference_total': int(ref_counts.get('total') or 0),
+        }
+
+    def forget_peer_residue(self, peer_id: str, *, remove_shadow_users: bool = True) -> Dict[str, Any]:
+        """Remove stored trust/profile residue for a forgotten peer."""
+        clean_peer_id = str(peer_id or '').strip()
+        if not clean_peer_id:
+            return {'success': False, 'error': 'Missing peer ID'}
+
+        shadow_user_ids: List[str] = []
+        if remove_shadow_users:
+            try:
+                with self.get_connection() as conn:
+                    rows = conn.execute(
+                        """
+                        SELECT id
+                        FROM users
+                        WHERE origin_peer = ?
+                          AND COALESCE(password_hash, '') = ''
+                        ORDER BY created_at ASC, id ASC
+                        """,
+                        (clean_peer_id,),
+                    ).fetchall()
+                    shadow_user_ids = [
+                        str((row['id'] if hasattr(row, 'keys') and 'id' in row.keys() else row[0]) or '').strip()
+                        for row in (rows or [])
+                        if str((row['id'] if hasattr(row, 'keys') and 'id' in row.keys() else row[0]) or '').strip()
+                    ]
+            except Exception as e:
+                logger.error(f"Failed to load shadow users for forgotten peer {clean_peer_id}: {e}", exc_info=True)
+                return {'success': False, 'error': 'Peer cleanup failed'}
+
+        deleted_shadow_user_ids: List[str] = []
+        failed_shadow_user_ids: List[str] = []
+        for user_id in shadow_user_ids:
+            if self.delete_user(user_id):
+                deleted_shadow_user_ids.append(user_id)
+            else:
+                failed_shadow_user_ids.append(user_id)
+
+        counts: Dict[str, int] = {
+            'deleted_shadow_users': len(deleted_shadow_user_ids),
+            'failed_shadow_users': len(failed_shadow_user_ids),
+            'trust_scores_deleted': 0,
+            'delete_signals_deleted': 0,
+            'peer_profiles_deleted': 0,
+            'mesh_principals_deleted': 0,
+            'mesh_grants_deleted': 0,
+            'mesh_grant_applications_deleted': 0,
+            'mesh_grant_revocations_deleted': 0,
+            'remote_attachment_transfers_deleted': 0,
+        }
+
+        try:
+            with self.get_connection() as conn:
+                def _delete_count(sql: str, params: tuple[Any, ...]) -> int:
+                    cur = self._exec_optional(conn, sql, params)
+                    if cur is None:
+                        return 0
+                    return max(0, int(cur.rowcount or 0))
+
+                counts['trust_scores_deleted'] = _delete_count(
+                    "DELETE FROM trust_scores WHERE peer_id = ?",
+                    (clean_peer_id,),
+                )
+                counts['delete_signals_deleted'] = _delete_count(
+                    "DELETE FROM delete_signals WHERE target_peer_id = ?",
+                    (clean_peer_id,),
+                )
+                counts['peer_profiles_deleted'] = _delete_count(
+                    "DELETE FROM peer_device_profiles WHERE peer_id = ?",
+                    (clean_peer_id,),
+                )
+                counts['mesh_grant_applications_deleted'] = _delete_count(
+                    "DELETE FROM mesh_bootstrap_grant_applications WHERE source_peer = ?",
+                    (clean_peer_id,),
+                )
+                counts['mesh_grant_revocations_deleted'] = _delete_count(
+                    "DELETE FROM mesh_bootstrap_grant_revocations WHERE issuer_peer_id = ?",
+                    (clean_peer_id,),
+                )
+                counts['mesh_grants_deleted'] = _delete_count(
+                    "DELETE FROM mesh_bootstrap_grants WHERE issuer_peer_id = ?",
+                    (clean_peer_id,),
+                )
+                counts['mesh_principals_deleted'] = _delete_count(
+                    "DELETE FROM mesh_principals WHERE origin_peer = ?",
+                    (clean_peer_id,),
+                )
+                counts['remote_attachment_transfers_deleted'] = _delete_count(
+                    "DELETE FROM remote_attachment_transfers WHERE origin_peer_id = ?",
+                    (clean_peer_id,),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to remove residue for forgotten peer {clean_peer_id}: {e}", exc_info=True)
+            return {'success': False, 'error': 'Peer cleanup failed'}
+
+        return {
+            'success': True,
+            'peer_id': clean_peer_id,
+            'deleted_shadow_user_ids': deleted_shadow_user_ids,
+            'failed_shadow_user_ids': failed_shadow_user_ids,
+            'cleanup': counts,
+        }
+
+    def repair_remote_shadow_duplicate_group(self, anchor_user_id: str) -> Dict[str, Any]:
+        """Merge duplicate remote-shadow rows for one origin/display identity into one canonical row."""
+        target_user_id = str(anchor_user_id or '').strip()
+        if not target_user_id:
+            return {'success': False, 'error': 'Missing user ID'}
+        try:
+            with self.get_connection() as conn:
+                group_rows = self._fetch_remote_shadow_duplicate_group_rows(conn, target_user_id)
+                if not group_rows:
+                    return {'success': False, 'error': 'Remote shadow duplicate group not found'}
+                if len(group_rows) == 1:
+                    row = group_rows[0]
+                    return {
+                        'success': True,
+                        'canonical_user_id': row.get('id'),
+                        'merged_user_ids': [],
+                        'merged_count': 0,
+                        'origin_peer': row.get('origin_peer'),
+                        'display_name': self._remote_shadow_identity_value(row),
+                    }
+
+                annotated: List[Dict[str, Any]] = []
+                for row in group_rows:
+                    ref_counts = self._collect_shadow_user_reference_counts(conn, str(row.get('id') or ''))
+                    row['reference_counts'] = ref_counts
+                    annotated.append(row)
+                canonical = min(
+                    annotated,
+                    key=lambda row: self._remote_shadow_candidate_sort_key(
+                        row,
+                        cast(Dict[str, int], row.get('reference_counts') or {}),
+                    ),
+                )
+                canonical_user_id = str(canonical.get('id') or '').strip()
+                merged_user_ids: List[str] = []
+
+                for row in annotated:
+                    source_user_id = str(row.get('id') or '').strip()
+                    if not source_user_id or source_user_id == canonical_user_id:
+                        continue
+                    merged_user_ids.append(source_user_id)
+
+                    self._reassign_user_reference_optional(conn, 'channels', 'created_by', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'streams', 'created_by', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'files', 'uploaded_by', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'messages', 'sender_id', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'messages', 'recipient_id', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'feed_posts', 'author_id', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'tasks', 'created_by', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'tasks', 'updated_by', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'tasks', 'assigned_to', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'objectives', 'created_by', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'requests', 'created_by', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'agent_inbox', 'sender_user_id', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'content_contexts', 'owner_user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'mention_events', 'author_id', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'mention_events', 'user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'mention_claims', 'claimed_by_user_id', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'channel_messages', 'user_id', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'channel_member_sync_deliveries', 'target_user_id', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'channel_post_permissions', 'user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'channel_post_permissions', 'granted_by', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'channel_removal_proposals', 'initiator_user_id', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'channel_removal_votes', 'voter_user_id', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'channel_removal_tombstones', 'retired_by_user_id', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'channel_removal_tombstones', 'restored_by_user_id', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'channel_thread_subscriptions', 'user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'user_channel_governance', 'user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'user_channel_governance', 'updated_by', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'post_permissions', 'user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'post_content_keys', 'user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'user_feed_preferences', 'user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'objective_members', 'user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'objective_members', 'added_by', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'request_members', 'user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'request_members', 'added_by', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'stream_access_tokens', 'user_id', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'file_access_log', 'accessed_by', source_user_id, canonical_user_id)
+                    self._reassign_user_reference_optional(conn, 'likes', 'user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'agent_presence', 'user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'agent_runtime_state', 'user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'agent_event_subscription_state', 'user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'agent_event_subscriptions', 'user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'agent_inbox', 'agent_user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'agent_inbox_config', 'user_id', source_user_id, canonical_user_id, unique_conflict_safe=True)
+                    self._reassign_user_reference_optional(conn, 'agent_inbox_audit', 'agent_user_id', source_user_id, canonical_user_id)
+
+                    self._merge_channel_membership_rows(conn, source_user_id, canonical_user_id)
+
+                    conn.execute(
+                        "DELETE FROM users WHERE id = ?",
+                        (source_user_id,),
+                    )
+
+                conn.commit()
+                return {
+                    'success': True,
+                    'canonical_user_id': canonical_user_id,
+                    'merged_user_ids': merged_user_ids,
+                    'merged_count': len(merged_user_ids),
+                    'origin_peer': canonical.get('origin_peer'),
+                    'display_name': self._remote_shadow_identity_value(canonical),
+                }
+        except Exception as e:
+            logger.error(f"Failed to repair remote shadow duplicate group for {target_user_id}: {e}", exc_info=True)
+            return {'success': False, 'error': 'Remote shadow repair failed'}
+
+    def delete_user(self, user_id: str) -> bool:
+        """Delete a user and all data that references them. System/local_user cannot be deleted.
+
+        With PRAGMA foreign_keys = ON, the DB has FKs from api_keys, user_keys, messages,
+        feed_posts, post_permissions, agent_inbox, agent_inbox_config, user_feed_preferences,
+        and channels(created_by). We remove dependent rows and reassign channel ownership
+        before deleting the user row.
+        """
+        if user_id in ('system', 'local_user'):
+            return False
+        try:
+            with self.get_connection() as conn:
+                exists = conn.execute(
+                    "SELECT 1 FROM users WHERE id = ?",
+                    (user_id,),
+                ).fetchone()
+                if not exists:
+                    return False
+
+                # Ensure fallback system user exists for ownership reassignment.
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO users (id, username, public_key)
+                    VALUES ('system', 'System', 'system_public_key')
+                    """
+                )
+
+                replacement_owner = 'system'
+                owner_row = conn.execute(
+                    "SELECT value FROM system_state WHERE key = 'instance_owner_id'"
+                ).fetchone()
+                if owner_row:
+                    candidate = str(
+                        owner_row['value']
+                        if hasattr(owner_row, 'keys') and 'value' in owner_row.keys()
+                        else owner_row[0]
+                    ).strip()
+                    if candidate and candidate != user_id:
+                        owner_exists = conn.execute(
+                            "SELECT 1 FROM users WHERE id = ?",
+                            (candidate,),
+                        ).fetchone()
+                        if owner_exists:
+                            replacement_owner = candidate
+
+                # Channels.created_by has a user FK without ON DELETE CASCADE.
+                # Reassign ownership first so user deletion cannot fail on FK.
+                conn.execute(
+                    "UPDATE channels SET created_by = ? WHERE created_by = ?",
+                    (replacement_owner, user_id),
+                )
+
+                def _exec_optional(sql: str, params: tuple[Any, ...]) -> None:
+                    try:
+                        conn.execute(sql, params)
+                    except sqlite3.OperationalError as e:
+                        msg = str(e).lower()
+                        if "no such table" in msg or "no such column" in msg:
+                            logger.debug(f"delete_user optional cleanup skipped: {sql} ({e})")
+                            return
+                        raise
+
+                # Ownership reassignment for FK-protected creators
+                _exec_optional(
+                    "UPDATE streams SET created_by = ? WHERE created_by = ?",
+                    (replacement_owner, user_id),
+                )
+                _exec_optional(
+                    "UPDATE files SET uploaded_by = ? WHERE uploaded_by = ?",
+                    (replacement_owner, user_id),
+                )
+                _exec_optional(
+                    "UPDATE tasks SET created_by = ?, updated_by = ? WHERE created_by = ?",
+                    (replacement_owner, replacement_owner, user_id),
+                )
+                _exec_optional(
+                    "UPDATE objectives SET created_by = ? WHERE created_by = ?",
+                    (replacement_owner, user_id),
+                )
+
+                # API and channel membership
+                conn.execute("DELETE FROM api_keys WHERE user_id = ?", (user_id,))
+                conn.execute("DELETE FROM user_keys WHERE user_id = ?", (user_id,))
+                conn.execute("DELETE FROM channel_members WHERE user_id = ?", (user_id,))
+
+                # Feed and posts
+                conn.execute("DELETE FROM post_permissions WHERE user_id = ?", (user_id,))
+                conn.execute("DELETE FROM post_content_keys WHERE user_id = ?", (user_id,))
+                conn.execute("DELETE FROM agent_inbox WHERE agent_user_id = ? OR sender_user_id = ?", (user_id, user_id))
+                conn.execute("DELETE FROM agent_inbox_config WHERE user_id = ?", (user_id,))
+                _exec_optional("DELETE FROM agent_inbox_audit WHERE agent_user_id = ?", (user_id,))
+                conn.execute("DELETE FROM user_feed_preferences WHERE user_id = ?", (user_id,))
+                conn.execute("DELETE FROM messages WHERE sender_id = ?", (user_id,))
+                conn.execute("DELETE FROM feed_posts WHERE author_id = ?", (user_id,))
+
+                # Best-effort cleanup (no FK in schema but avoid orphan rows)
+                conn.execute("DELETE FROM content_contexts WHERE owner_user_id = ?", (user_id,))
+                conn.execute("DELETE FROM mention_events WHERE user_id = ? OR author_id = ?", (user_id, user_id))
+                _exec_optional("DELETE FROM mention_claims WHERE claimed_by_user_id = ?", (user_id,))
+                _exec_optional("DELETE FROM objective_members WHERE user_id = ? OR added_by = ?", (user_id, user_id))
+                _exec_optional("UPDATE tasks SET assigned_to = NULL WHERE assigned_to = ?", (user_id,))
+                _exec_optional("DELETE FROM stream_access_tokens WHERE user_id = ?", (user_id,))
+                _exec_optional("DELETE FROM file_access_log WHERE accessed_by = ?", (user_id,))
+                _exec_optional("DELETE FROM channel_member_sync_deliveries WHERE target_user_id = ?", (user_id,))
+                _exec_optional("DELETE FROM likes WHERE user_id = ?", (user_id,))
+                _exec_optional("DELETE FROM agent_presence WHERE user_id = ?", (user_id,))
+                _exec_optional("DELETE FROM agent_runtime_state WHERE user_id = ?", (user_id,))
+                _exec_optional("DELETE FROM agent_event_subscription_state WHERE user_id = ?", (user_id,))
+                _exec_optional("DELETE FROM agent_event_subscriptions WHERE user_id = ?", (user_id,))
+
+                # Channel messages (table in channels.py, same DB): likes then parent refs then messages
+                try:
+                    msg_ids = [r[0] for r in conn.execute("SELECT id FROM channel_messages WHERE user_id = ?", (user_id,)).fetchall()]
+                    if msg_ids:
+                        placeholders = ",".join("?" for _ in msg_ids)
+                        conn.execute(f"DELETE FROM likes WHERE message_id IN ({placeholders})", msg_ids)
+                        conn.execute(
+                            f"UPDATE channel_messages SET parent_message_id = NULL WHERE parent_message_id IN ({placeholders})",
+                            msg_ids,
+                        )
+                        conn.execute(f"DELETE FROM channel_messages WHERE user_id = ?", (user_id,))
+                except sqlite3.OperationalError as e:
+                    if "no such table" not in str(e).lower():
+                        raise
+                # Finally remove the user (must be last due to FKs)
+                deleted = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+                conn.commit()
+                return cast(int, deleted.rowcount) > 0
+        except Exception as e:
+            logger.error(f"Failed to delete user: {e}")
+            return False
+    
+    def has_any_registered_users(self) -> bool:
+        """Check if any users with passwords exist (for first-time setup detection)."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT 1 FROM users WHERE password_hash IS NOT NULL LIMIT 1"
+            )
+            return cursor.fetchone() is not None
+    
+    def store_user_keys(self, user_id: str, ed25519_pub: str, ed25519_priv: str,
+                        x25519_pub: str, x25519_priv: str) -> bool:
+        """Store crypto keypair for a user."""
+        try:
+            with self.get_connection() as conn:
+                conn.execute("""
+                    INSERT OR REPLACE INTO user_keys 
+                    (user_id, ed25519_public_key, ed25519_private_key, x25519_public_key, x25519_private_key)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (user_id, ed25519_pub, ed25519_priv, x25519_pub, x25519_priv))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Failed to store user keys: {e}")
+            return False
+    
+    def get_user_keys(self, user_id: str) -> Optional[Dict[str, str]]:
+        """Get crypto keypair for a user."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM user_keys WHERE user_id = ?", (user_id,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+    
+    # Message management methods
+    def store_message(self, message_id: str, sender_id: str, 
+                     recipient_id: Optional[str], content: str,
+                     message_type: str = 'text', metadata: Optional[Dict] = None) -> bool:
+        """Store a message in the database."""
+        try:
+            with self.get_connection() as conn:
+                conn.execute("""
+                    INSERT INTO messages (id, sender_id, recipient_id, content, message_type, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    message_id, sender_id, recipient_id, content, 
+                    message_type, json.dumps(metadata) if metadata else None
+                ))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Failed to store message: {e}")
+            return False
+    
+    def get_messages(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get recent messages for a user."""
+        with self.get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT m.*, u.username as sender_username 
+                FROM messages m
+                LEFT JOIN users u ON m.sender_id = u.id
+                WHERE m.recipient_id = ? OR m.recipient_id IS NULL
+                ORDER BY m.created_at DESC
+                LIMIT ?
+            """, (user_id, limit))
+            
+            messages = []
+            for row in cursor.fetchall():
+                message = dict(row)
+                if message['metadata']:
+                    message['metadata'] = json.loads(message['metadata'])
+                messages.append(message)
+            return messages
+    
+    # Trust management methods
+    def update_trust_score(self, peer_id: str, score_delta: int, reason: Optional[str] = None) -> None:
+        """Update trust score for a peer."""
+        with self.get_connection() as conn:
+            conn.execute("""
+                INSERT INTO trust_scores (peer_id, score, notes) 
+                VALUES (?, max(0, min(100, ?)), ?)
+                ON CONFLICT(peer_id) DO UPDATE SET
+                    score = max(0, min(100, score + ?)),
+                    last_interaction = CURRENT_TIMESTAMP,
+                    notes = ?
+            """, (peer_id, score_delta, reason, score_delta, reason))
+            conn.commit()
+    
+    def get_trust_score(self, peer_id: str) -> int:
+        """Get current trust score for a peer."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT score FROM trust_scores WHERE peer_id = ?", (peer_id,)
+            )
+            row = cursor.fetchone()
+            return row['score'] if row else 0  # Unknown peers are pending review
+    
+    def get_all_trust_scores(self) -> Dict[str, int]:
+        """Get all trust scores."""
+        with self.get_connection() as conn:
+            cursor = conn.execute("SELECT peer_id, score FROM trust_scores")
+            return {row['peer_id']: row['score'] for row in cursor.fetchall()}
+    
+    # Delete signals management
+    def create_delete_signal(self, signal_id: str, target_peer_id: str, 
+                           data_type: str, data_id: str, reason: Optional[str] = None) -> bool:
+        """Create a delete signal for compliance tracking."""
+        try:
+            with self.get_connection() as conn:
+                conn.execute("""
+                    INSERT INTO delete_signals (id, target_peer_id, data_type, data_id, reason)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (signal_id, target_peer_id, data_type, data_id, reason))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Failed to create delete signal: {e}")
+            return False
+    
+    def update_delete_signal_status(self, signal_id: str, status: str) -> bool:
+        """Update delete signal status. Returns False if signal_id not found."""
+        VALID_STATUS_COLUMNS = {
+            'pending': 'sent_at',
+            'acknowledged': 'acknowledged_at',
+            'complied': 'complied_at',
+            'violated': 'violated_at',
+            'rejected': 'rejected_at',
+        }
+        try:
+            with self.get_connection() as conn:
+                timestamp_col = VALID_STATUS_COLUMNS.get(status)
+                if timestamp_col:
+                    cur = conn.execute(f"""
+                        UPDATE delete_signals 
+                        SET status = ?, {timestamp_col} = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                    """, (status, signal_id))
+                else:
+                    cur = conn.execute("""
+                        UPDATE delete_signals 
+                        SET status = ?
+                        WHERE id = ?
+                    """, (status, signal_id))
+                conn.commit()
+                if cur.rowcount == 0:
+                    logger.warning(f"Delete signal {signal_id} not found for status update")
+                    return False
+                return True
+        except Exception as e:
+            logger.error(f"Failed to update delete signal: {e}")
+            return False
+    
+    # Utility methods
+    def cleanup_old_data(self, days: int = 30) -> None:
+        """Clean up old data to maintain performance."""
+        from datetime import timedelta
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+        
+        with self.get_connection() as conn:
+            # Clean up old messages (keep only recent ones)
+            conn.execute("""
+                DELETE FROM messages 
+                WHERE created_at < ? AND message_type != 'important'
+            """, (cutoff_date.isoformat(),))
+            
+            # Clean up resolved delete signals
+            conn.execute("""
+                DELETE FROM delete_signals 
+                WHERE status = 'complied' AND complied_at < ?
+            """, (cutoff_date.isoformat(),))
+            
+            conn.commit()
+            logger.info(f"Cleaned up data older than {days} days")
+    
+    def get_database_stats(self) -> Dict[str, int]:
+        """Get database statistics."""
+        with self.get_connection() as conn:
+            stats = {}
+            tables = ['users', 'messages', 'trust_scores', 'delete_signals', 'peers', 'feed_posts']
+            
+            for table in tables:
+                cursor = conn.execute(f"SELECT COUNT(*) as count FROM {table}")
+                stats[table] = cursor.fetchone()['count']
+            
+            return stats
+    
+    # Instance authentication methods
+    def is_instance_password_set(self) -> bool:
+        """Check if an instance password has been set."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.execute("SELECT 1 FROM instance_auth WHERE id = 1")
+                return cursor.fetchone() is not None
+        except Exception:
+            return False
+    
+    def set_instance_password(self, password_hash: str) -> bool:
+        """Set or update the instance password."""
+        try:
+            with self.get_connection() as conn:
+                conn.execute("""
+                    INSERT INTO instance_auth (id, password_hash) VALUES (1, ?)
+                    ON CONFLICT(id) DO UPDATE SET 
+                        password_hash = excluded.password_hash,
+                        updated_at = CURRENT_TIMESTAMP
+                """, (password_hash,))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Failed to set instance password: {e}")
+            return False
+    
+    def get_instance_password_hash(self) -> Optional[str]:
+        """Get the stored instance password hash."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.execute("SELECT password_hash FROM instance_auth WHERE id = 1")
+                row = cursor.fetchone()
+                return row['password_hash'] if row else None
+        except Exception as e:
+            logger.error(f"Failed to get instance password: {e}")
+            return None
+    
+    # Post content key methods (crypto-enforced permissions)
+    def store_post_content_keys(self, post_id: str, wrapped_keys: Dict[str, str]) -> bool:
+        """Store wrapped content keys for a post's recipients."""
+        try:
+            with self.get_connection() as conn:
+                for user_id, wrapped_key in wrapped_keys.items():
+                    conn.execute("""
+                        INSERT OR REPLACE INTO post_content_keys (post_id, user_id, wrapped_key)
+                        VALUES (?, ?, ?)
+                    """, (post_id, user_id, wrapped_key))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Failed to store post content keys: {e}")
+            return False
+    
+    def get_post_content_key(self, post_id: str, user_id: str) -> Optional[str]:
+        """Get the wrapped content key for a specific user and post."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.execute("""
+                    SELECT wrapped_key FROM post_content_keys 
+                    WHERE post_id = ? AND user_id = ?
+                """, (post_id, user_id))
+                row = cursor.fetchone()
+                return row['wrapped_key'] if row else None
+        except Exception as e:
+            logger.error(f"Failed to get post content key: {e}")
+            return None
+    
+    def revoke_post_access(self, post_id: str, user_id: str) -> bool:
+        """Revoke a user's access to a post by removing their wrapped key."""
+        try:
+            with self.get_connection() as conn:
+                conn.execute("""
+                    DELETE FROM post_content_keys 
+                    WHERE post_id = ? AND user_id = ?
+                """, (post_id, user_id))
+                # Also remove from post_permissions
+                conn.execute("""
+                    DELETE FROM post_permissions 
+                    WHERE post_id = ? AND user_id = ?
+                """, (post_id, user_id))
+                conn.commit()
+                logger.info(f"Revoked access to post {post_id} for user {user_id}")
+                return True
+        except Exception as e:
+            logger.error(f"Failed to revoke post access: {e}")
+            return False
+    
+    def get_post_recipients(self, post_id: str) -> list:
+        """Get all users who have content keys for a post."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.execute("""
+                    SELECT user_id, granted_at FROM post_content_keys 
+                    WHERE post_id = ?
+                """, (post_id,))
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Failed to get post recipients: {e}")
+            return []

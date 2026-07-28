@@ -1,0 +1,312 @@
+{% macro avatar_badge(user, class_name='') -%}
+    {% set label = user.display_name or user.username or user.user_id or 'User' %}
+    <div class="dm-avatar {{ class_name }}"
+         data-user-id="{{ user.user_id }}"
+         data-origin-peer="{{ user.origin_peer or '' }}"
+         onclick='copyUserId({{ user.user_id|tojson }}, {{ label|tojson }}, this)'
+         title="View user details">
+        {% if user.avatar_url %}
+            <img src="{{ user.avatar_url }}" alt="{{ label }}">
+        {% else %}
+            <span>{{ (label[:2] if label|length > 1 else label[:1])|upper }}</span>
+        {% endif %}
+    </div>
+{%- endmacro %}
+
+{% macro avatar_stack(users, class_name='') -%}
+    <div class="dm-avatar-stack {{ class_name }}">
+        {% for user in users[:3] %}
+            <div class="dm-avatar-stack-item" style="z-index: {{ 10 - loop.index0 }};">
+                {{ avatar_badge(user, 'stacked') }}
+            </div>
+        {% endfor %}
+        {% if users|length > 3 %}
+            <div class="dm-avatar-stack-item dm-avatar-stack-more">+{{ users|length - 3 }}</div>
+        {% endif %}
+    </div>
+{%- endmacro %}
+
+{% macro render_image_gallery(images, gallery_id, layout_hint='') -%}
+    {% set gallery_layout = (layout_hint or '')|lower %}
+    {% set hinted_layout = gallery_layout if gallery_layout in ['grid', 'hero', 'strip', 'stack'] else '' %}
+    {% set show_all = hinted_layout in ['grid', 'strip', 'stack'] %}
+    {% set show_count = images|length if show_all else [images|length, 4]|min %}
+    {% set img_count = [images|length, 5]|min %}
+    {% set image_urls = images | map(attribute='url') | list %}
+    <div class="media-grid"
+         data-count="{{ img_count }}"
+         {% if hinted_layout %}data-layout="{{ hinted_layout }}"{% endif %}
+         {% if gallery_id %}data-gallery-id="{{ gallery_id }}"{% endif %}>
+        {% for img in images[:show_count] %}
+            {% set has_url = img.url and img.url|trim %}
+            {% set image_file_id = img.id or img.file_id or img.origin_file_id or ((img.url.split('/files/')[1].split('/')[0]) if img.url and '/files/' in img.url else None) %}
+            {% if has_url %}
+                <div class="mg-cell"{% if image_file_id %} data-canopy-source-ref="attachment:{{ image_file_id }}"{% endif %} onclick="openLightbox({{ loop.index0 }}, '{{ image_urls | tojson | urlencode }}')">
+                    <img src="{{ img.url }}/thumb" alt="{{ img.name or 'image' }}" loading="lazy">
+                    <a class="mg-download"
+                       href="{{ img.url }}"
+                       download="{{ img.name or 'image' }}"
+                       title="Download full resolution"
+                       onclick="event.stopPropagation();">
+                        <i class="bi bi-download"></i>
+                    </a>
+                    {% if not show_all and loop.last and images|length > show_count %}
+                        <div class="mg-more-overlay">+{{ images|length - show_count }}</div>
+                    {% endif %}
+                </div>
+            {% else %}
+                <div class="mg-cell mg-cell-unavailable d-flex align-items-center justify-content-center p-2">
+                    <span class="small text-muted text-center">
+                        {{ img.name or 'Image' }}<br>
+                        <span class="opacity-75">Not on this device yet — will appear when synced</span>
+                    </span>
+                </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+{%- endmacro %}
+
+{% macro render_dm_attachment(attachment, message_id, idx) -%}
+    {% set attachment_file_id = attachment.id or attachment.file_id or attachment.origin_file_id or ((attachment.url.split('/files/')[1].split('/')[0]) if attachment.url and '/files/' in attachment.url else None) %}
+    {% set remote_large = attachment.large_attachment or attachment.storage_mode == 'remote_large' %}
+    {% set remote_payload = {
+        'origin_file_id': attachment.origin_file_id or attachment.id or attachment.file_id,
+        'source_peer_id': attachment.source_peer_id or attachment.origin_peer,
+        'name': attachment.name,
+        'type': attachment.type,
+        'size': attachment.size,
+        'checksum': attachment.checksum,
+        'large_attachment': true,
+        'storage_mode': attachment.storage_mode or 'remote_large'
+    } %}
+    {% set lower_name = (attachment.name or '')|lower %}
+    {% set is_module = (attachment.type or '') == 'text/html' and (lower_name.endswith('.canopy-module.html') or lower_name.endswith('.canopy-module.htm')) %}
+    {% set spreadsheet_preview = lower_name.endswith('.csv') or lower_name.endswith('.tsv') or lower_name.endswith('.xlsx') or lower_name.endswith('.xlsm') %}
+    {% set previewable = attachment_file_id and (lower_name.endswith('.md') or lower_name.endswith('.markdown') or lower_name.endswith('.txt') or lower_name.endswith('.log') or lower_name.endswith('.json') or lower_name.endswith('.py') or lower_name.endswith('.js') or lower_name.endswith('.ts') or spreadsheet_preview or lower_name.endswith('.yaml') or lower_name.endswith('.yml') or lower_name.endswith('.xml') or lower_name.endswith('.tex') or lower_name.endswith('.html') or lower_name.endswith('.css') or lower_name.endswith('.sh') or lower_name.endswith('.bat') or lower_name.endswith('.cfg') or lower_name.endswith('.ini') or lower_name.endswith('.toml')) %}
+    {% set preview_id = 'dm-attachment-preview-' ~ message_id ~ '-' ~ idx %}
+    {% set module_title = (attachment.name or 'Canopy Module')|replace('.canopy-module.html', '')|replace('.canopy-module.htm', '')|replace('-', ' ')|replace('_', ' ')|title %}
+    {% set module_manifest = {
+        'version': 1,
+        'key': 'module:' ~ (attachment_file_id or module_title|lower|replace(' ', '-')),
+        'widget_type': 'module_surface',
+        'render_mode': 'module_runtime',
+        'title': module_title,
+        'subtitle': 'Safe executable lesson or station logic bound to this source.',
+        'provider_label': 'Canopy Module',
+        'icon': 'bi-box-fill',
+        'body_text': 'Single-file module bundle executed inside the Canopy Module Runtime.',
+        'badges': ['Module', 'Sandboxed', 'Source-bound'],
+        'details': [
+            {'label': 'File', 'value': attachment.name or 'module bundle'},
+            {'label': 'Format', 'value': 'Single HTML bundle'}
+        ],
+        'station_surface': {
+            'kind': 'station_surface',
+            'domain': 'education',
+            'label': module_title ~ ' Surface',
+            'summary': 'Executable lesson or station logic remains bound to this source while capabilities stay brokered.',
+            'recurring': false,
+            'scope': 'source'
+        },
+        'action_policy': {
+            'bounded': true,
+            'max_risk': 'view',
+            'human_gate': 'none',
+            'audit_label': 'Bounded runtime'
+        },
+        'source_binding': {
+            'binding_type': 'message_attachment',
+            'source_scope': 'source',
+            'return_label': 'Return to source'
+        },
+        'module_runtime': {
+            'format': 'single_html',
+            'bundle_file_id': attachment_file_id,
+            'bundle_url': '/files/' ~ attachment_file_id,
+            'module_type': module_title,
+            'runtime_label': 'Canopy Module',
+            'capabilities': {
+                'required': ['source.read', 'deck.return'],
+                'optional': ['clipboard.write', 'module.storage.local']
+            }
+        }
+    } %}
+
+    {% if attachment.type and attachment.type.startswith('image/') %}
+        {% if attachment.url %}
+            <div class="dm-attachment dm-attachment-image"{% if attachment_file_id %} data-canopy-source-ref="attachment:{{ attachment_file_id }}"{% endif %}>
+                <img src="{{ attachment.url }}" alt="{{ attachment.name }}" onclick="viewImage('{{ attachment.url }}')">
+                <div class="dm-attachment-meta">
+                    <span>{{ attachment.name }}</span>
+                    <small>{{ attachment.size | filesizeformat if attachment.size is defined and attachment.size is not none else '—' }}</small>
+                </div>
+            </div>
+        {% else %}
+            <div class="dm-attachment dm-attachment-card">
+                <div class="dm-attachment-title-row">
+                    <div>
+                        <strong>{{ attachment.name }}</strong>
+                        <small>{{ attachment.type }} • {{ attachment.size | filesizeformat if attachment.size is defined and attachment.size is not none else '—' }}</small>
+                    </div>
+                    {% if remote_large %}
+                        <button type="button" class="btn btn-sm btn-outline-primary" title="Download from peer" onclick='requestRemoteAttachmentDownload({{ remote_payload|tojson }}, this)'>
+                            <i class="bi bi-cloud-download"></i> Download
+                        </button>
+                    {% endif %}
+                </div>
+            </div>
+        {% endif %}
+    {% elif attachment.type and attachment.type.startswith('audio/') %}
+        <div class="dm-attachment dm-attachment-card"{% if attachment_file_id %} data-canopy-source-ref="attachment:{{ attachment_file_id }}"{% endif %}>
+            <div class="dm-attachment-title-row">
+                <div>
+                    <strong>{{ attachment.name }}</strong>
+                    <small>{{ attachment.type }} • {{ attachment.size | filesizeformat if attachment.size is defined and attachment.size is not none else '—' }}</small>
+                </div>
+                {% if attachment.url %}
+                    <a href="{{ attachment.url }}" class="btn btn-sm btn-outline-primary" download="{{ attachment.name }}">
+                        <i class="bi bi-download"></i>
+                    </a>
+                {% elif remote_large %}
+                    <button type="button" class="btn btn-sm btn-outline-primary" title="Download from peer" onclick='requestRemoteAttachmentDownload({{ remote_payload|tojson }}, this)'>
+                        <i class="bi bi-cloud-download"></i> Download
+                    </button>
+                {% endif %}
+            </div>
+            {% if attachment.url %}
+                <audio controls preload="metadata" class="w-100 mt-2">
+                    <source src="{{ attachment.url }}" type="{{ attachment.type or 'audio/mpeg' }}">
+                </audio>
+            {% endif %}
+        </div>
+    {% elif attachment.type and attachment.type.startswith('video/') %}
+        <div class="dm-attachment dm-attachment-card"{% if attachment_file_id %} data-canopy-source-ref="attachment:{{ attachment_file_id }}"{% endif %}>
+            <div class="dm-attachment-title-row">
+                <div>
+                    <strong>{{ attachment.name }}</strong>
+                    <small>{{ attachment.type }} • {{ attachment.size | filesizeformat if attachment.size is defined and attachment.size is not none else '—' }}</small>
+                </div>
+                {% if attachment.url %}
+                    <a href="{{ attachment.url }}" class="btn btn-sm btn-outline-primary" download="{{ attachment.name }}">
+                        <i class="bi bi-download"></i>
+                    </a>
+                {% elif remote_large %}
+                    <button type="button" class="btn btn-sm btn-outline-primary" title="Download from peer" onclick='requestRemoteAttachmentDownload({{ remote_payload|tojson }}, this)'>
+                        <i class="bi bi-cloud-download"></i> Download
+                    </button>
+                {% endif %}
+            </div>
+            {% if attachment.url %}
+                <video controls preload="metadata" playsinline class="w-100 mt-2" style="max-width:100%;border-radius:12px;background:#000;">
+                    <source src="{{ attachment.url }}" type="{{ attachment.type or 'video/mp4' }}">
+                </video>
+            {% endif %}
+        </div>
+    {% elif is_module %}
+        <div class="dm-attachment dm-attachment-card" data-canopy-module-card="1" data-canopy-widget-manifest="{{ module_manifest|tojson|forceescape }}" data-canopy-widget-key="{{ module_manifest.key|e }}"{% if attachment_file_id %} data-canopy-module-bundle-id="{{ attachment_file_id|e }}" data-canopy-module-bundle-name="{{ (attachment.name or '')|e }}" data-canopy-source-ref="attachment:{{ attachment_file_id }}"{% endif %}>
+            <div class="d-flex align-items-start justify-content-between gap-3 flex-wrap">
+                <div>
+                    <div class="fw-semibold"><i class="bi bi-box-fill me-2"></i>{{ module_title }}</div>
+                    <div class="small text-muted mt-1">Safe executable module bundle attached to this source.</div>
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                        <span class="badge rounded-pill text-bg-secondary">Module</span>
+                        <span class="badge rounded-pill text-bg-secondary">Sandboxed</span>
+                        <span class="badge rounded-pill text-bg-secondary">Source-bound</span>
+                    </div>
+                </div>
+                <span class="badge rounded-pill text-bg-info">Canopy Module</span>
+            </div>
+            <div class="dm-attachment-title-row mt-2">
+                <div>
+                    <small>{{ attachment.name }}</small>
+                </div>
+                <div class="dm-attachment-actions">
+                    <button type="button"
+                            class="btn btn-sm btn-outline-success"
+                            onclick="openMediaDeckForManifestNode(this)">
+                        <i class="bi bi-grid-1x2"></i>
+                        Open module
+                    </button>
+                    {% if attachment.url %}
+                        <a href="{{ attachment.url }}" class="btn btn-sm btn-outline-primary" download="{{ attachment.name }}">
+                            <i class="bi bi-download"></i>
+                        </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    {% else %}
+        <div class="dm-attachment dm-attachment-card"{% if attachment_file_id %} data-canopy-source-ref="attachment:{{ attachment_file_id }}"{% endif %}>
+            <div class="dm-attachment-title-row">
+                <div>
+                    <strong>{{ attachment.name }}</strong>
+                    <small>{{ attachment.type or '' }}{% if attachment.type %} • {% endif %}{{ attachment.size | filesizeformat if attachment.size is defined and attachment.size is not none else '—' }}</small>
+                    {% if spreadsheet_preview %}
+                        <div class="dm-attachment-badges">
+                            <span class="badge rounded-pill text-bg-info-subtle text-info-emphasis">Sheet</span>
+                            {% if lower_name.endswith('.xlsm') %}
+                                <span class="badge rounded-pill text-bg-warning">Macros disabled</span>
+                            {% endif %}
+                        </div>
+                    {% endif %}
+                </div>
+                <div class="dm-attachment-actions">
+                    {% if previewable %}
+                        <button type="button"
+                                class="btn btn-sm btn-outline-secondary"
+                                data-preview-toggle="{{ preview_id }}"
+                                data-preview-label="{{ 'Open sheet' if spreadsheet_preview else 'Preview' }}"
+                                data-preview-expanded-label="{{ 'Hide sheet' if spreadsheet_preview else 'Collapse' }}"
+                                onclick="toggleAttachmentPreview('{{ preview_id }}', '/ajax/files/{{ attachment_file_id }}/preview')">
+                            <i class="bi bi-eye"></i>
+                            <span class="preview-label">{{ 'Open sheet' if spreadsheet_preview else 'Preview' }}</span>
+                        </button>
+                    {% endif %}
+                    {% if attachment.url %}
+                        <a href="{{ attachment.url }}" class="btn btn-sm btn-outline-primary" download="{{ attachment.name }}">
+                            <i class="bi bi-download"></i>
+                        </a>
+                    {% elif remote_large %}
+                        <button type="button" class="btn btn-sm btn-outline-primary" title="Download from peer" onclick='requestRemoteAttachmentDownload({{ remote_payload|tojson }}, this)'>
+                            <i class="bi bi-cloud-download"></i> Download
+                        </button>
+                    {% endif %}
+                </div>
+            </div>
+            {% if previewable %}
+                <div id="{{ preview_id }}" class="file-preview-wrapper mt-2" style="display:none;"></div>
+            {% endif %}
+        </div>
+    {% endif %}
+{%- endmacro %}
+
+{% macro render_dm_attachments(attachments, message_id) -%}
+    {% set images = [] %}
+    {% set non_images = [] %}
+    {% set ns = namespace(layout_hint='') %}
+    {% for attachment in attachments or [] %}
+        {% if attachment.type and attachment.type.startswith('image/') %}
+            {% if images.append(attachment) %}{% endif %}
+            {% if not ns.layout_hint %}
+                {% set candidate = (attachment.layout_hint or '')|lower %}
+                {% if candidate in ['grid', 'hero', 'strip', 'stack'] %}
+                    {% set ns.layout_hint = candidate %}
+                {% endif %}
+            {% endif %}
+        {% else %}
+            {% if non_images.append(attachment) %}{% endif %}
+        {% endif %}
+    {% endfor %}
+
+    {% if images and ns.layout_hint and images|length > 1 %}
+        {{ render_image_gallery(images, 'dm-' ~ message_id, ns.layout_hint) }}
+    {% else %}
+        {% for attachment in images %}
+            {{ render_dm_attachment(attachment, message_id, loop.index0) }}
+        {% endfor %}
+    {% endif %}
+
+    {% for attachment in non_images %}
+        {{ render_dm_attachment(attachment, message_id, loop.index0 + images|length) }}
+    {% endfor %}
+{%- endmacro %}

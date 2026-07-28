@@ -1,0 +1,49 @@
+# Canopy - Python >= 3.10 required
+#
+# COMPATIBILITY SHIM — the authoritative dependency list lives in
+# pyproject.toml.  Prefer:  uv pip install -e .
+# This file is kept temporarily for pip-only environments and legacy
+# scripts. It will be removed once all consumers have migrated.
+#
+# Version pins use >= minimums so newer Python versions (3.13, 3.14)
+# can pull compatible wheels. Exact pins broke on 3.14 because older
+# C extensions (msgpack 1.0.7, cryptography 41.x) used removed CPython APIs.
+
+# Core dependencies
+Flask>=3.0.0
+Werkzeug>=3.0.1
+waitress>=3.0.2       # Production WSGI server (cross-platform: Windows, macOS, Linux)
+
+# Security and cryptography
+cryptography>=41.0.7
+bcrypt>=4.1.2
+
+# Database
+# sqlite3  # Built into Python
+
+# Utilities
+python-dateutil>=2.8.2
+
+# Image processing (avatars / thumbnails)
+Pillow>=10.4.0
+
+# P2P Networking dependencies
+zeroconf>=0.132.2       # mDNS peer discovery
+websockets>=12.0        # WebSocket transport
+msgpack>=1.0.7          # Efficient serialization
+base58>=2.1.1           # Base58 encoding for peer IDs
+
+# Data import/export
+openpyxl>=3.1.5         # Excel spreadsheet support
+
+# Development dependencies (optional -- install with: pip install -r requirements-dev.txt)
+# pytest>=7.4.3
+# pytest-flask>=1.3.0
+# pytest-cov>=4.1.0
+# black>=23.11.0
+# flake8>=6.1.0
+
+# Future enhancements
+# kademlia>=2.2.2       # DHT for remote discovery
+# aiortc>=1.6.0         # WebRTC for voice
+# pystun3>=1.0.0        # STUN for NAT traversal
