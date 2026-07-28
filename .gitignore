@@ -1,0 +1,27 @@
+.build/
+.swiftpm/
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+*.o
+*.dylib
+.DS_Store
+local/
+
+# Claude Code plugin (local development)
+.claude-plugin/
+agents/
+skills/
+
+# Release artifacts
+ghost-os-*.tar.gz
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# PyInstaller (if used)
+vision-sidecar/build/
+vision-sidecar/dist/
+*.spec
