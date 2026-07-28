@@ -1,0 +1,286 @@
+# scan-synced-content.mjs — CHALLENGE / FLAG waivers
+#
+# One waiver per line:  <path-or-glob>:<rule-id>  <reason>
+#   - path-or-glob : repo-relative path; `*` = one segment, `**` = any depth.
+#   - rule-id      : the finding id printed by the scanner (e.g. pipe-to-shell-doc,
+#                    outbound-network, hook-definition, mcp-remote, dynamic-exec).
+#   - reason       : REQUIRED free text (why this dual-use pattern is legitimate).
+#                    Separate it from the rule id with 2+ spaces or a `#`.
+#
+# A waiver downgrades a CHALLENGE or FLAG finding to a reported-but-PASSING note.
+# REFUSE findings are NEVER waivable here — a real hard-block must be fixed at the
+# source, not signed away. Malformed lines (missing reason) are IGNORED, not honored.
+#
+# The point of an in-repo allowlist: a legitimate CHALLENGE gets signed off in a
+# reviewed commit (this file) instead of by weakening a detection pattern.
+
+# ── Known upstream one-line installers (documented install steps in READMEs). ──
+# These are legitimate `curl … | sh` install instructions, not executable payloads
+# (they live in markdown docs, hence graded CHALLENGE not REFUSE). Waivers are
+# PER-PLUGIN and name the specific installer: the former corpus-wide
+# `plugins/**/README.md:pipe-to-shell` line pre-cleared ANY future curl|sh in ANY
+# README forever (2026-07-14 ops review) — a new install target in a README not
+# listed here now correctly CHALLENGEs and needs its own reviewed, path-scoped line.
+plugins/ai-agency/make-scenario-builder/README.md:pipe-to-shell  documented official Ollama installer (https://ollama.com/install.sh) as the local-model setup step
+plugins/ai-ml/ai-sdk-agents/README.md:pipe-to-shell  documented official Ollama installer (https://ollama.com/install.sh) as the manual local-model fallback
+plugins/community/geepers-agents/README.md:pipe-to-shell  documented official Ollama installer (https://ollama.com/install.sh) as the local-model setup step
+plugins/ai-ml/jeremy-vertex-engine/README.md:pipe-to-shell  documented official Google Cloud SDK installer (https://sdk.cloud.google.com) as the gcloud setup step
+plugins/ai-ml/jeremy-vertex-validator/README.md:pipe-to-shell  documented official Google Cloud SDK installer (https://sdk.cloud.google.com) as the gcloud setup step
+plugins/devops/jeremy-adk-terraform/README.md:pipe-to-shell  documented official Google Cloud SDK installer (https://sdk.cloud.google.com) as the gcloud setup step
+plugins/devops/jeremy-vertex-terraform/README.md:pipe-to-shell  documented official Google Cloud SDK installer (https://sdk.cloud.google.com) as the gcloud setup step
+plugins/business-tools/promptbook/README.md:pipe-to-shell  upstream's own documented setup script (promptbook.gg/setup.sh) in the mirrored README
+plugins/community/mnemos/README.md:pipe-to-shell  upstream's own install.sh (raw.githubusercontent.com/polyxmedia/mnemos) documented as the install step
+plugins/community/portaljs/README.md:pipe-to-shell  upstream's own install script (raw.githubusercontent.com/datopian/portaljs) documented as the install step
+plugins/ai-ml/ollama-local-ai/**:pipe-to-shell  official Ollama installer is the documented setup path for this skill
+plugins/mcp/slack-channel/**:pipe-to-shell  documented Bun/Claude install steps in slack-channel setup docs (covers README.md + .audit-harness/README.md intent-audit-harness installer)
+plugins/saas-packs/**/skills/**/SKILL.md:pipe-to-shell  documented vendor-CLI install step inside a SaaS-pack skill
+
+# ── Remote MCP servers that ARE the plugin's engine (reviewed, no credentials embedded). ──
+plugins/mcp/servicegraph/.mcp.json:mcp-remote  the plugin IS an agent-skills front-end to the remote ServiceGraph MCP server (https://mcp.servicegraph.co, plain HTTP transport, no embedded credentials) — reviewed 2026-07-07, curated mirror pinned at fork SHA df4648a4
+plugins/mcp/servicegraph/README.md:mcp-remote  same remote MCP endpoint documented as the setup step in the upstream README — reviewed 2026-07-07 with the .mcp.json above
+
+# ── skills-janitor (khendzel) — vetted 2026-07-13 @ upstream c63c3478e (PR #1020). ──
+# The three GitHub-discovery scripts call out ONLY to api.github.com /
+# raw.githubusercontent.com (plus precheck's user-supplied SKILL.md URL, which is
+# fetched to a mktemp file and parsed for frontmatter — never executed or sourced).
+# GITHUB_TOKEN is sent solely as an Authorization header to api.github.com — the
+# credential's own service; precheck's AUTH_ARGS array never accompanies the
+# raw/arbitrary-URL fetches. Full-read vet per 699 playbook: 23 admitted files,
+# scan 0 REFUSE, all 5 skills j-rig 12/12.
+plugins/community/skills-janitor/scripts/search.sh:outbound-network  GitHub skill-search queries api.github.com only (the documented discovery feature) — vetted 2026-07-13 @ c63c3478e
+plugins/community/skills-janitor/scripts/precheck.sh:outbound-network  fetches SKILL.md from raw.githubusercontent.com / api.github.com / a user-supplied URL, read-and-parse only, never executed — vetted 2026-07-13 @ c63c3478e
+plugins/community/skills-janitor/scripts/compare.sh:outbound-network  keyword market comparison against api.github.com only — vetted 2026-07-13 @ c63c3478e
+plugins/community/skills-janitor/scripts/search.sh:secret-exfil-cooccur  GITHUB_TOKEN sent only as an Authorization header to api.github.com, its own service
+plugins/community/skills-janitor/scripts/precheck.sh:secret-exfil-cooccur  GITHUB_TOKEN attached only to the api.github.com request (AUTH_ARGS array), never to the raw or arbitrary-URL fetches
+plugins/community/skills-janitor/scripts/compare.sh:secret-exfil-cooccur  GITHUB_TOKEN sent only as an Authorization header to api.github.com, its own service
+
+# ── governed-second-brain committed runtime bundle — reviewed 2026-07-16 @ upstream 967fb70f. ──
+# The team-mode client sends TEAMKB_API_TOKEN only to the owner-configured
+# TEAMKB_API_URL; local mode is in-process and performs no runtime network after
+# its one-time pinned native dependency install. The dynamic constructor is
+# AJV's bundled schema compiler operating on the plugin's fixed schemas, not
+# user-provided source text. The upstream clean-install and full-chain smokes
+# exercise both modes, fail-closed dispatch, governance, and audit verification.
+plugins/mcp/governed-second-brain/plugin-runtime/governed-brain.cjs:secret-exfil-cooccur  team-mode TEAMKB_API_TOKEN is sent only to its configured TEAMKB_API_URL service; reviewed upstream bundle 967fb70f
+plugins/mcp/governed-second-brain/plugin-runtime/governed-brain.cjs:dynamic-exec  AJV schema compiler in the generated bundle compiles fixed plugin schemas, not user-provided source text; reviewed upstream bundle 967fb70f
+
+# ── sources-change-unscanned is a ONE-SHOT waiver (enforced in code by
+# honoredWaivers, blocker 62ye.3 / #985 defect 3): a line is honored ONLY in the
+# PR whose diff adds it, so it can never persistently waive future source-list
+# changes. Do NOT leave a standing line here — after its PR merges it is inert
+# (the diff-added check ignores it) and only misleads. Each sources PR that needs
+# the sign-off adds its own `sources.yaml:sources-change-unscanned  <reason>`.
+# (The spent one-shot lines for skills-janitor / walkie-talkie / localplugins /
+# quit-sponsor were removed 2026-07-14 per this rule — their vet evidence lives
+# in git history and the intake PRs #1020/#1030 that added them.)
+
+# ── hyperflow orchestrator skill: upstream web-research feature. ──
+plugins/ai-agency/hyperflow/skills/hyperflow/SKILL.md:allowed-tools-network  upstream v5.8.x added WebFetch/WebSearch to the orchestrator skill for its web-research feature (skills/hyperflow/web-research.md); mirror content hand-reviewed 2026-07-10 (evidence gate on #1008 + the be6ae2d3->eae6e34c5 delta review) — external mirror, upstream's design, no credential surface
+
+# ── UIZZE free catalogue workflow — vetted 2026-07-22 @ upstream c95111fd1517. ──
+plugins/design/uizze/skills/anti-ui-slop/SKILL.md:allowed-tools-network  WebFetch is limited to gathering structural UI evidence from the documented public https://uizze.com catalogue; the complete free workflow requires no account, token, MCP, script, or executable, and the skill forbids copying proprietary assets
+sources.yaml:sources-change-unscanned  UIZZE vetted per the 699 playbook @ uizze/uizze c95111fd1517 (2026-07-22): all 5 admitted files read; markdown-only tier with no scripts/hooks/MCP config; scanner 0 REFUSE / 1 CHALLENGE (WebFetch to documented public catalogue, signed off above) / 0 FLAG; schema 3.15.2 grade A 90/100, unicode hygiene clean, MIT verified; author account active since 2018 with 101 public repos and external site; include globs root-anchored and dry-run matched exactly 5 files
+
+# ── Skill Refiner plugin: the 3-layer hook architecture IS the product. ──
+# /j-rig is the eval-guided SKILL.md improvement loop; its sinker/line/hook hooks
+# are the reviewed, intended feature (not an injected payload). They only invoke
+# the published @intentsolutions/refiner CLI + a deterministic validator — no
+# network, no embedded credentials, no dynamic-exec of untrusted input. SKILL_ID
+# is validated (^[a-zA-Z0-9_-]+$) before any use. Reviewed 2026-07-09.
+plugins/productivity/j-rig/**:hook-definition  the sinker/line/hook 3-layer architecture is this plugin's purpose; hooks only wrap the published @intentsolutions/refiner CLI + a deterministic validator, no network/credentials/dynamic-exec — reviewed 2026-07-09
+
+# ── Reviewed defensive scanner signatures. ──
+plugins/security/agent-safety-preflight/scripts/agent_preflight_lite.py:outbound-network  defensive scanner regex detects curl/wget install chains; it does not perform network calls
+
+# ── databricks-streaming-guardian: the PreToolUse guard IS the skill's purpose. ──
+# The pack's only blocking hook. It intercepts Bash and BLOCKS a DROP/CREATE-OR-
+# REPLACE/VACUUM only when it positively confirms an active streaming consumer of
+# the target table; it fails OPEN (allows) on any unverifiable check and reads only
+# system.streaming.query_progress via the Databricks CLI — no embedded credentials,
+# no network fetch, no dynamic-exec of untrusted input, no shell string is built
+# from tool output. Authored in-repo (not a synced mirror). Reviewed 2026-07-12.
+plugins/saas-packs/databricks-pack/hooks/hooks.json:hook-definition  registers the streaming-guardian PreToolUse guard pack-wide; command is a fixed path to the in-repo hook script, no network/credentials/dynamic-exec — reviewed 2026-07-12
+plugins/saas-packs/databricks-pack/skills/databricks-streaming-guardian/hooks/streaming-guard-hook.py:hook-definition  the guard itself — precise (only real SQL surfaces classify), fail-open, reads system.streaming.query_progress via the databricks CLI only, no network/credentials/dynamic-exec — reviewed 2026-07-12
+
+# ── databricks-bundle-medic: the two deploy hooks ARE the skill's purpose. ──
+# Both act only on `databricks bundle deploy`. The PreToolUse guard validates + backs
+# up the bundle's local terraform state and is advisory (never blocks, fails open). The
+# PostToolUse hook matches the exact D6 grant-ordering stderr and only adds context
+# recommending one retry — it never masks another error class. Neither makes a network
+# fetch, embeds a credential, or runs dynamic-exec of untrusted input; no shell string
+# is built from tool output. Authored in-repo (not a synced mirror). Reviewed 2026-07-12.
+plugins/saas-packs/databricks-pack/skills/databricks-bundle-medic/hooks/bundle-deploy-guard.py:hook-definition  advisory PreToolUse state guard — validates/back-ups terraform.tfstate before a bundle deploy, never blocks, fails open, no network/credentials/dynamic-exec — reviewed 2026-07-12
+plugins/saas-packs/databricks-pack/skills/databricks-bundle-medic/hooks/bundle-grant-retry.py:hook-definition  PostToolUse D6 detector — matches only the exact grant-ordering stderr and adds one-retry context, never masks other errors, no network/credentials/dynamic-exec — reviewed 2026-07-12
+
+# ── localplugins brand-forge + content-multiplier — vetted 2026-07-13 @ upstream fe2f4fa2a (PR #1030 intake). ──
+# hooks-mcp tier: each plugin's entire auto-execute surface is ONE SessionStart
+# hook, justified per entry in the vet. brand-forge's dispatcher loops read-only
+# local context emitters (brand/*.json reads + a summary echo; no network, no
+# writes; the GEMINI_API_KEY preflight only tests -z, never prints). content-
+# multiplier's is a 5-line existence-check + hint echo. The only networked module
+# (brand-forge lib/genimage.mjs) POSTs to official Gemini/OpenAI endpoints,
+# opt-in behind BRAND_FORGE_RASTER=1 + a provider key, header-borne, never
+# written to disk.
+plugins/design/brand-forge/hooks/hooks.json:hook-definition  single SessionStart hook (startup|resume) running the plugin-root session-start.sh dispatcher — justified per entry, vetted 2026-07-13 @ fe2f4fa2a
+plugins/design/brand-forge/hooks/session-start.sh:hook-definition  read-only context-emitter dispatcher (brand/*.json reads, no network/writes/env exfil) — read line-by-line 2026-07-13
+plugins/design/brand-forge/.claude-plugin/plugin.json:hook-definition  hooks pointer to the vetted hooks/hooks.json only
+plugins/productivity/content-multiplier/hooks/hooks.json:hook-definition  single SessionStart hook (startup|resume) running the 5-line hint script — justified per entry, vetted 2026-07-13 @ fe2f4fa2a
+plugins/productivity/content-multiplier/hooks/session-start.sh:hook-definition  5-line existence-check + echo hint; set -euo pipefail; no network/env/writes — read line-by-line 2026-07-13
+plugins/productivity/content-multiplier/.claude-plugin/plugin.json:hook-definition  hooks pointer to the vetted hooks/hooks.json only
+plugins/productivity/content-multiplier/docs/ADR.md:allowed-tools-network  false positive — the ADR's table documents WebFetch/WebSearch are NOT declared ("offline by design"); scanner's 20-line window caught the names in prose
+
+# ── skill-creator / agent-creator: creator-skill documentation shows hooks syntax. ──
+# These are fenced frontmatter-reference examples inside the creators' own docs
+# (what a hooks: block looks like), not hook definitions the plugin executes.
+# Surfaced 2026-07-13 when PR #1043 edited the files (changed-file scan covers
+# the whole file, so pre-existing example blocks graded too).
+plugins/skill-enhancers/skill-creator/skills/agent-creator/SKILL.md:hook-definition  fenced example of standalone-agent frontmatter fields (hooks: {} placeholder) in creator documentation
+plugins/skill-enhancers/skill-creator/skills/skill-creator/references/frontmatter-spec.md:hook-definition  fenced example of the skill hooks: field shape in the frontmatter reference
+plugins/skill-enhancers/skill-creator/skills/skill-creator/references/validation-rules.md:hook-definition  fenced example of a valid hooks: object in the validation-rules reference
+
+# ── ops-review docs-truth pass (claude-k0h2, 2026-07-14): sources.yaml HEADER COMMENTS only. ──
+sources.yaml:sources-change-unscanned  comment-only header fix (stale curated-set list + daily→weekly cadence wording); zero source entries added, removed, or repointed — no data line in the sources: list changed, nothing new to vet or pin
+plugins/saas-packs/hubspot-pack/skills/hubspot-warehouse-sync/SKILL.md:secret-exfil-cooccur  documented backfill example reads HUBSPOT_ACCESS_TOKEN from env and sends it only to api.hubapi.com (the credential's own service); BigQuery sink uses GCP client creds, not the HubSpot token — reviewed 2026-07-16
+
+# ── dolt-mcp-vcs repo rename (2026-07-17): repoint only, same vetted source. ──
+sources.yaml:sources-change-unscanned  repoint of the dolt-mcp-vcs source from jeremylongshore/dolt-mcp-vcs to jeremylongshore/dolt-mcp-vcs-plugin (GitHub repo rename by the owner) — same already-vetted first-party repo, REFUSE-scanned at sync time and pinned in sources.lock.json via the relock re-sync; catalog name/target_path unchanged, no new or foreign source added
+plugins/saas-packs/notion-pack/skills/notion-advanced-troubleshooting/SKILL.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (NOTION_TOKEN→Notion API); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/notion-pack/skills/notion-advanced-troubleshooting/references/implementation.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (NOTION_TOKEN→Notion API); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/notion-pack/skills/notion-common-errors/references/examples.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (NOTION_TOKEN→Notion API); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/notion-pack/skills/notion-debug-bundle/references/implementation.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (NOTION_TOKEN→Notion API); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/notion-pack/skills/notion-deploy-integration/references/examples.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (NOTION_TOKEN→Notion API); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/notion-pack/skills/notion-enterprise-rbac/references/implementation.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (NOTION_TOKEN→Notion API); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/notion-pack/skills/notion-incident-runbook/SKILL.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (NOTION_TOKEN→Notion API); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/notion-pack/skills/notion-load-scale/references/implementation.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (NOTION_TOKEN→Notion API); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/notion-pack/skills/notion-multi-env-setup/SKILL.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (NOTION_TOKEN→Notion API); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/notion-pack/skills/notion-prod-checklist/SKILL.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (NOTION_TOKEN→Notion API); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/notion-pack/skills/notion-security-basics/SKILL.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (NOTION_TOKEN→Notion API); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/notion-pack/skills/notion-security-basics/references/oauth2-and-webhooks.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (NOTION_TOKEN→Notion API); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/notion-pack/skills/notion-upgrade-migration/SKILL.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (NOTION_TOKEN→Notion API); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/notion-pack/skills/notion-webhooks-events/SKILL.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (NOTION_TOKEN→Notion API); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/supabase-pack/skills/supabase-advanced-troubleshooting/SKILL.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (SUPABASE_ANON_KEY→Supabase); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/supabase-pack/skills/supabase-incident-runbook/references/diagnostics.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (SUPABASE_ANON_KEY→Supabase); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/supabase-pack/skills/supabase-incident-runbook/references/examples.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (SUPABASE_ANON_KEY→Supabase); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/supabase-pack/skills/supabase-load-scale/SKILL.md:secret-exfil-cooccur  documented SaaS API-client example: reads own-service credential from env and sends it only to its own service (SUPABASE_ANON_KEY→Supabase); no third-party sink (foreign-host scan empty) — reviewed 2026-07-17
+plugins/saas-packs/elevenlabs-pack/skills/elevenlabs-common-errors/references/error-reference.md:secret-exfil-cooccur  documented ElevenLabs API-client example: ELEVENLABS_API_KEY is read from env and sent only to api.elevenlabs.io (its own service, verified at the flagged line); other hosts in-file (pypi.org install URLs, ngrok.io/your-app.com webhook-receiver placeholders) do NOT receive the credential — reviewed 2026-07-17
+plugins/saas-packs/elevenlabs-pack/skills/elevenlabs-install-auth/SKILL.md:secret-exfil-cooccur  documented ElevenLabs API-client example: ELEVENLABS_API_KEY is read from env and sent only to api.elevenlabs.io (its own service, verified at the flagged line); other hosts in-file (pypi.org install URLs, ngrok.io/your-app.com webhook-receiver placeholders) do NOT receive the credential — reviewed 2026-07-17
+plugins/saas-packs/elevenlabs-pack/skills/elevenlabs-install-auth/references/examples.md:secret-exfil-cooccur  documented ElevenLabs API-client example: ELEVENLABS_API_KEY is read from env and sent only to api.elevenlabs.io (its own service, verified at the flagged line); other hosts in-file (pypi.org install URLs, ngrok.io/your-app.com webhook-receiver placeholders) do NOT receive the credential — reviewed 2026-07-17
+plugins/saas-packs/elevenlabs-pack/skills/elevenlabs-install-auth/references/implementation.md:secret-exfil-cooccur  documented ElevenLabs API-client example: ELEVENLABS_API_KEY is read from env and sent only to api.elevenlabs.io (its own service, verified at the flagged line); other hosts in-file (pypi.org install URLs, ngrok.io/your-app.com webhook-receiver placeholders) do NOT receive the credential — reviewed 2026-07-17
+plugins/saas-packs/elevenlabs-pack/skills/elevenlabs-security-basics/references/examples.md:secret-exfil-cooccur  documented ElevenLabs API-client example: ELEVENLABS_API_KEY is read from env and sent only to api.elevenlabs.io (its own service, verified at the flagged line); other hosts in-file (pypi.org install URLs, ngrok.io/your-app.com webhook-receiver placeholders) do NOT receive the credential — reviewed 2026-07-17
+plugins/saas-packs/elevenlabs-pack/skills/elevenlabs-security-basics/references/implementation.md:secret-exfil-cooccur  documented ElevenLabs API-client example: ELEVENLABS_API_KEY is read from env and sent only to api.elevenlabs.io (its own service, verified at the flagged line); other hosts in-file (pypi.org install URLs, ngrok.io/your-app.com webhook-receiver placeholders) do NOT receive the credential — reviewed 2026-07-17
+plugins/saas-packs/elevenlabs-pack/skills/elevenlabs-upgrade-migration/SKILL.md:secret-exfil-cooccur  documented ElevenLabs API-client example: ELEVENLABS_API_KEY is read from env and sent only to api.elevenlabs.io (its own service, verified at the flagged line); other hosts in-file (pypi.org install URLs, ngrok.io/your-app.com webhook-receiver placeholders) do NOT receive the credential — reviewed 2026-07-17
+plugins/saas-packs/elevenlabs-pack/skills/elevenlabs-upgrade-migration/references/examples.md:secret-exfil-cooccur  documented ElevenLabs API-client example: ELEVENLABS_API_KEY is read from env and sent only to api.elevenlabs.io (its own service, verified at the flagged line); other hosts in-file (pypi.org install URLs, ngrok.io/your-app.com webhook-receiver placeholders) do NOT receive the credential — reviewed 2026-07-17
+plugins/saas-packs/elevenlabs-pack/skills/elevenlabs-upgrade-migration/references/migration-guide.md:secret-exfil-cooccur  documented ElevenLabs API-client example: ELEVENLABS_API_KEY is read from env and sent only to api.elevenlabs.io (its own service, verified at the flagged line); other hosts in-file (pypi.org install URLs, ngrok.io/your-app.com webhook-receiver placeholders) do NOT receive the credential — reviewed 2026-07-17
+plugins/saas-packs/elevenlabs-pack/skills/elevenlabs-webhooks-events/references/implementation.md:secret-exfil-cooccur  documented ElevenLabs API-client example: ELEVENLABS_API_KEY is read from env and sent only to api.elevenlabs.io (its own service, verified at the flagged line); other hosts in-file (pypi.org install URLs, ngrok.io/your-app.com webhook-receiver placeholders) do NOT receive the credential — reviewed 2026-07-17
+plugins/saas-packs/apify-pack/skills/apify-ci-integration/SKILL.md:secret-exfil-cooccur  documented apify
+apify API-client example: reads its own-service API key from env and sends it only to the apify
+apify API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/apify-pack/skills/apify-common-errors/references/error-reference.md:secret-exfil-cooccur  documented apify
+apify API-client example: reads its own-service API key from env and sends it only to the apify
+apify API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/apify-pack/skills/apify-debug-bundle/SKILL.md:secret-exfil-cooccur  documented apify
+apify API-client example: reads its own-service API key from env and sends it only to the apify
+apify API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/apify-pack/skills/apify-debug-bundle/references/implementation.md:secret-exfil-cooccur  documented apify
+apify API-client example: reads its own-service API key from env and sends it only to the apify
+apify API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/apify-pack/skills/apify-prod-checklist/references/implementation.md:secret-exfil-cooccur  documented apify
+apify API-client example: reads its own-service API key from env and sends it only to the apify
+apify API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/apify-pack/skills/apify-rate-limits/references/examples.md:secret-exfil-cooccur  documented apify
+apify API-client example: reads its own-service API key from env and sends it only to the apify
+apify API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/apify-pack/skills/apify-security-basics/references/implementation.md:secret-exfil-cooccur  documented apify
+apify API-client example: reads its own-service API key from env and sends it only to the apify
+apify API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/apify-pack/skills/apify-webhooks-events/SKILL.md:secret-exfil-cooccur  documented apify
+apify API-client example: reads its own-service API key from env and sends it only to the apify
+apify API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/clickhouse-pack/skills/clickhouse-ci-integration/references/implementation.md:secret-exfil-cooccur  documented clickhouse
+clickhouse API-client example: reads its own-service API key from env and sends it only to the clickhouse
+clickhouse API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/clickhouse-pack/skills/clickhouse-local-dev-loop/references/implementation.md:secret-exfil-cooccur  documented clickhouse
+clickhouse API-client example: reads its own-service API key from env and sends it only to the clickhouse
+clickhouse API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/clickhouse-pack/skills/clickhouse-upgrade-migration/SKILL.md:secret-exfil-cooccur  documented clickhouse
+clickhouse API-client example: reads its own-service API key from env and sends it only to the clickhouse
+clickhouse API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/clickhouse-pack/skills/clickhouse-webhooks-events/SKILL.md:secret-exfil-cooccur  documented clickhouse
+clickhouse API-client example: reads its own-service API key from env and sends it only to the clickhouse
+clickhouse API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/groq-pack/skills/groq-deploy-integration/references/implementation.md:secret-exfil-cooccur  documented groq
+groq API-client example: reads its own-service API key from env and sends it only to the groq
+groq API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/intercom-pack/skills/intercom-core-workflow-b/references/implementation.md:secret-exfil-cooccur  documented intercom
+intercom API-client example: reads its own-service API key from env and sends it only to the intercom
+intercom API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/intercom-pack/skills/intercom-data-handling/references/implementation.md:secret-exfil-cooccur  documented intercom
+intercom API-client example: reads its own-service API key from env and sends it only to the intercom
+intercom API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/intercom-pack/skills/intercom-deploy-integration/SKILL.md:secret-exfil-cooccur  documented intercom
+intercom API-client example: reads its own-service API key from env and sends it only to the intercom
+intercom API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/intercom-pack/skills/intercom-deploy-integration/references/implementation.md:secret-exfil-cooccur  documented intercom
+intercom API-client example: reads its own-service API key from env and sends it only to the intercom
+intercom API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/intercom-pack/skills/intercom-enterprise-rbac/references/implementation.md:secret-exfil-cooccur  documented intercom
+intercom API-client example: reads its own-service API key from env and sends it only to the intercom
+intercom API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/intercom-pack/skills/intercom-install-auth/references/oauth.md:secret-exfil-cooccur  documented intercom
+intercom API-client example: reads its own-service API key from env and sends it only to the intercom
+intercom API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/intercom-pack/skills/intercom-performance-tuning/references/implementation.md:secret-exfil-cooccur  documented intercom
+intercom API-client example: reads its own-service API key from env and sends it only to the intercom
+intercom API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/intercom-pack/skills/intercom-security-basics/SKILL.md:secret-exfil-cooccur  documented intercom
+intercom API-client example: reads its own-service API key from env and sends it only to the intercom
+intercom API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/intercom-pack/skills/intercom-security-basics/references/implementation.md:secret-exfil-cooccur  documented intercom
+intercom API-client example: reads its own-service API key from env and sends it only to the intercom
+intercom API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/intercom-pack/skills/intercom-upgrade-migration/references/examples.md:secret-exfil-cooccur  documented intercom
+intercom API-client example: reads its own-service API key from env and sends it only to the intercom
+intercom API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/intercom-pack/skills/intercom-webhooks-events/SKILL.md:secret-exfil-cooccur  documented intercom
+intercom API-client example: reads its own-service API key from env and sends it only to the intercom
+intercom API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/klaviyo-pack/skills/klaviyo-deploy-integration/references/platform-deployments.md:secret-exfil-cooccur  documented klaviyo
+klaviyo API-client example: reads its own-service API key from env and sends it only to the klaviyo
+klaviyo API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/klaviyo-pack/skills/klaviyo-enterprise-rbac/references/implementation.md:secret-exfil-cooccur  documented klaviyo
+klaviyo API-client example: reads its own-service API key from env and sends it only to the klaviyo
+klaviyo API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/klaviyo-pack/skills/klaviyo-install-auth/SKILL.md:secret-exfil-cooccur  documented klaviyo
+klaviyo API-client example: reads its own-service API key from env and sends it only to the klaviyo
+klaviyo API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/klaviyo-pack/skills/klaviyo-install-auth/references/examples.md:secret-exfil-cooccur  documented klaviyo
+klaviyo API-client example: reads its own-service API key from env and sends it only to the klaviyo
+klaviyo API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/klaviyo-pack/skills/klaviyo-install-auth/references/implementation.md:secret-exfil-cooccur  documented klaviyo
+klaviyo API-client example: reads its own-service API key from env and sends it only to the klaviyo
+klaviyo API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/klaviyo-pack/skills/klaviyo-multi-env-setup/references/implementation.md:secret-exfil-cooccur  documented klaviyo
+klaviyo API-client example: reads its own-service API key from env and sends it only to the klaviyo
+klaviyo API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/klaviyo-pack/skills/klaviyo-prod-checklist/references/implementation.md:secret-exfil-cooccur  documented klaviyo
+klaviyo API-client example: reads its own-service API key from env and sends it only to the klaviyo
+klaviyo API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/klaviyo-pack/skills/klaviyo-security-basics/SKILL.md:secret-exfil-cooccur  documented klaviyo
+klaviyo API-client example: reads its own-service API key from env and sends it only to the klaviyo
+klaviyo API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/klaviyo-pack/skills/klaviyo-security-basics/references/implementation.md:secret-exfil-cooccur  documented klaviyo
+klaviyo API-client example: reads its own-service API key from env and sends it only to the klaviyo
+klaviyo API (verified at the flagged line); other in-file hosts (install URLs, status pages) do not receive the credential — reviewed 2026-07-17
+plugins/saas-packs/klaviyo-pack/skills/klaviyo-common-errors/references/diagnostics.md:pipe-to-shell  diagnostic: curl fetches a status-API JSON response (or localhost /health) piped to `python3 -m json.tool` / `json.load` — a JSON formatter/parser, NOT a shell; no fetched-code execution — reviewed 2026-07-17
+plugins/saas-packs/klaviyo-pack/skills/klaviyo-incident-runbook/references/remediation.md:pipe-to-shell  diagnostic: curl fetches a status-API JSON response (or localhost /health) piped to `python3 -m json.tool` / `json.load` — a JSON formatter/parser, NOT a shell; no fetched-code execution — reviewed 2026-07-17
+plugins/saas-packs/klaviyo-pack/skills/klaviyo-prod-checklist/references/examples.md:pipe-to-shell  diagnostic: curl fetches a status-API JSON response (or localhost /health) piped to `python3 -m json.tool` / `json.load` — a JSON formatter/parser, NOT a shell; no fetched-code execution — reviewed 2026-07-17
+plugins/saas-packs/klaviyo-pack/skills/klaviyo-prod-checklist/references/implementation.md:pipe-to-shell  diagnostic: curl fetches a status-API JSON response (or localhost /health) piped to `python3 -m json.tool` / `json.load` — a JSON formatter/parser, NOT a shell; no fetched-code execution — reviewed 2026-07-17
+plugins/saas-packs/clerk-pack/skills/clerk-rate-limits/SKILL.md:secret-exfil-cooccur  documented Clerk API-client example: createClerkClient reads CLERK_SECRET_KEY from env and uses it only against the Clerk API (its own service); no third-party sink — reviewed 2026-07-18
+
+# intent-labs-pack (labs dogfood skills) — dual-use docs/examples reviewed 2026-07-23
+plugins/productivity/intent-labs-pack/skills/audit-tests/SKILL.md:pipe-to-shell  documented npm registry version probe (curl to registry.npmjs.org JSON, not piped to a shell) for audit-harness currency check
+plugins/productivity/intent-labs-pack/skills/audit-tests/shared-refs/hooks-and-ci.md:hook-definition  instructional documentation of Claude Code hooks for test enforcement — not an auto-executing plugin hooks.json
+plugins/productivity/intent-labs-pack/skills/audit-tests/shared-refs/security-testing.md:hook-definition  instructional documentation of security testing hooks — not shippable auto-exec config
+plugins/productivity/intent-labs-pack/skills/validate-skillmd/SKILL.md:hook-definition  skill body discusses hooks as a validation surface; no hooks.json shipped
+plugins/productivity/intent-labs-pack/skills/validate-skillmd/SKILL.md:allowed-tools-network  documentation of how to detect over-broad allowed-tools (mentions WebFetch as a pattern to flag), not granting network tools
+plugins/productivity/intent-labs-pack/skills/validate-skillmd/references/schema-reminder-frontmatter.md:hook-definition  extracted schema field docs mentioning hooks as a frontmatter topic — not an executable hooks.json
