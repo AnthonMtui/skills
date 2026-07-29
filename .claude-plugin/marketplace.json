@@ -1,0 +1,48 @@
+{
+  "name": "anthonmtui-skills-marketplace",
+  "owner": {
+    "name": "AnthonMtui"
+  },
+  "metadata": {
+    "description": "Plugin marketplace mirroring select skill sources from this repo that ship as full Claude Code plugins (hooks, commands, and/or skills) upstream, vendored here from their original repos."
+  },
+  "plugins": [
+    {
+      "name": "headroom",
+      "source": "./plugins/headroom",
+      "description": "Headroom startup hooks for Claude Code and GitHub Copilot CLI.",
+      "version": "0.31.0",
+      "author": {
+        "name": "Headroom Contributors",
+        "url": "https://github.com/chopratejas/headroom"
+      },
+      "homepage": "https://github.com/chopratejas/headroom",
+      "repository": "https://github.com/headroomlabs-ai/headroom",
+      "keywords": ["headroom", "hooks", "claude-code", "copilot-cli"]
+    },
+    {
+      "name": "ponytail",
+      "source": "./plugins/ponytail",
+      "description": "Forces the laziest solution that works. YAGNI, stdlib first, one line over fifty.",
+      "version": "4.8.4",
+      "author": {
+        "name": "Dietrich Gebert",
+        "url": "https://github.com/DietrichGebert"
+      },
+      "repository": "https://github.com/DietrichGebert/ponytail",
+      "category": "productivity"
+    },
+    {
+      "name": "claude-mem",
+      "source": "./plugins/claude-mem",
+      "description": "Memory compression system for Claude Code - persist context across sessions.",
+      "version": "13.12.4",
+      "author": {
+        "name": "Alex Newman"
+      },
+      "repository": "https://github.com/thedotmack/claude-mem",
+      "license": "Apache-2.0",
+      "keywords": ["claude", "claude-code", "mcp", "plugin", "memory", "compression", "knowledge-graph"]
+    }
+  ]
+}
