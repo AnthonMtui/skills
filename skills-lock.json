@@ -2497,6 +2497,12 @@
       "skillPath": "skills/08-ml-deployment/azure-ml-deployer/SKILL.md",
       "computedHash": "c7ae24bb3255329035b95613dfa0b28186c2be3abf1b49ad335e8248fafb1f57"
     },
+    "babysit": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/babysit/SKILL.md",
+      "computedHash": "1e0610afc6110fad8c012f44dd5aa09cdd25530198f515f49e5d94eda08a4465"
+    },
     "background": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
       "sourceType": "github",
@@ -5071,6 +5077,12 @@
       "skillPath": "skills/14-gcp-skills/cloud-sql-instance-setup/SKILL.md",
       "computedHash": "e9bc992482c91b2088917d556aa00acadf06358b2656b5c965a6593c3f7404fe"
     },
+    "cloud-sync": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/cloud-sync/SKILL.md",
+      "computedHash": "e33574d4a9136764f10ae7f33dc3cc983e11e3c19f9f4b243b102eedcc3dc904"
+    },
     "cloud-tasks-queue-setup": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
       "sourceType": "github",
@@ -7453,6 +7465,12 @@
       "skillPath": "design-ops/skills/design-impact-reporting/SKILL.md",
       "computedHash": "7ed0305fd11f93a0a49205d7bceb79ac5dc815a25e5f051b1d881630f35334c4"
     },
+    "design-is": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/design-is/SKILL.md",
+      "computedHash": "f2912e5eb57ebf3dafa2c08fa92af2294309951cef124b83d35214aebc98de8d"
+    },
     "design-mcp-workflow": {
       "source": "anthropics/knowledge-work-plugins",
       "sourceType": "github",
@@ -7782,6 +7800,12 @@
       "sourceType": "github",
       "skillPath": "skills/dnanexus-integration/SKILL.md",
       "computedHash": "7567eed3f32d16939552c64f04e5c9c8135b053881e7d3e1abf39970aa61c9e3"
+    },
+    "do": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/do/SKILL.md",
+      "computedHash": "ac80a2338872768e8d9e24bcad9d7a379019afa062167a20b525c4562405a2a3"
     },
     "doc-coauthoring": {
       "source": "anthropics/skills",
@@ -12679,6 +12703,12 @@
       "skillPath": "skills/hosted-agents/SKILL.md",
       "computedHash": "72b033056feb3cb3c8cda095864ecc436b6b3b5876cb50183034d4c84b8110a6"
     },
+    "how-it-works": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/how-it-works/SKILL.md",
+      "computedHash": "121ff2926b3de14b8b1ffdb883b736004a3b25e3fcb3589ca386ecca5bff1900"
+    },
     "http-client-config": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
       "sourceType": "github",
@@ -14395,6 +14425,12 @@
       "skillPath": "skills/.curated/klingai-webhook-config/SKILL.md",
       "computedHash": "dc2b28e8559b31a1fa90baad6e9af1d9b2c5c4d6df1ac53fb8b4e1b290b49652"
     },
+    "knowledge-agent": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/knowledge-agent/SKILL.md",
+      "computedHash": "52a8f2c5351a0b73b3c55296c3dcd46ade6070f66f0d59ccd01832a9f77123f6"
+    },
     "knowledge-synthesis": {
       "source": "anthropics/knowledge-work-plugins",
       "sourceType": "github",
@@ -14934,6 +14970,12 @@
       "sourceType": "github",
       "skillPath": "learn/SKILL.md",
       "computedHash": "6db86955b5522d9e9c7364d8936337a92ba70f003ef004ac795987149d76b340"
+    },
+    "learn-codebase": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/learn-codebase/SKILL.md",
+      "computedHash": "9142aab8302123f63d8db49430d1f59e2ff2bdcb885d6b3f054f22f7d92f5791"
     },
     "learning-rate-scheduler": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
@@ -15967,6 +16009,12 @@
       "skillPath": "make-pdf/SKILL.md",
       "computedHash": "4b80a679ba8aecd72d308c5396d21cbd0322882cb056d0350ac05c0fcf780759"
     },
+    "make-plan": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/make-plan/SKILL.md",
+      "computedHash": "828c96bc3eab1c8c46db001b3a6a71fe07dfb32814081678ddfe067ba0978664"
+    },
     "make-scenario-creator": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
       "sourceType": "github",
@@ -16188,6 +16236,12 @@
       "sourceType": "github",
       "skillPath": "partner-built/zoom-plugin/skills/meeting-sdk/linux/SKILL.md",
       "computedHash": "664d1360c364126025a3d00011219e5f27579c481f8c62070b17d8a392ee0462"
+    },
+    "mem-search": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/mem-search/SKILL.md",
+      "computedHash": "6058bee763732e6c85f77523e97ad27f476e73ee44fbfdcf105a218ef1dd52e0"
     },
     "mem9": {
       "source": "mem9-ai/mem9",
@@ -17785,6 +17839,12 @@
       "skillPath": "office-hours/SKILL.md",
       "computedHash": "0b2f5008b27e61ac152becd9027943c8a4c7505c38359dfb5ab3ea186a4b3670"
     },
+    "oh-my-issues": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/oh-my-issues/SKILL.md",
+      "computedHash": "cee3669201ddc7eb488e3c20699ad46428ded9ff29e98c7c1fbfc696e1d29cfd"
+    },
     "okr-tracker-creator": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
       "sourceType": "github",
@@ -18817,6 +18877,12 @@
       "skillPath": "skills/03-security-fundamentals/path-traversal-finder/SKILL.md",
       "computedHash": "b69d22a2059701c4f18754166451886a7a90e12ff98537b64aca3919d5659386"
     },
+    "pathfinder": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/pathfinder/SKILL.md",
+      "computedHash": "96bf2edcbffd36a3119d4dea942561b02ecf355cc872d73cf21cc346092e3db2"
+    },
     "pathml": {
       "source": "K-Dense-AI/scientific-agent-skills",
       "sourceType": "github",
@@ -19614,6 +19680,42 @@
       "sourceType": "github",
       "skillPath": "skills/16-api-integration/polling-mechanism-setup/SKILL.md",
       "computedHash": "e81b71fdb6b5715fc48a2beb8b9853093f991f6b468ca514f4511de313f1e1f5"
+    },
+    "ponytail": {
+      "source": "DietrichGebert/ponytail",
+      "sourceType": "github",
+      "skillPath": "skills/ponytail/SKILL.md",
+      "computedHash": "210fa0831f649ce9f8a305f7b7c8cf2a0dd09ac4dd53067109941b96e7811d4e"
+    },
+    "ponytail-audit": {
+      "source": "DietrichGebert/ponytail",
+      "sourceType": "github",
+      "skillPath": "skills/ponytail-audit/SKILL.md",
+      "computedHash": "8b8d72e6ff70b65b6c9518d470fcf29dc696eea93d28f3efa10fdcc60cbd696d"
+    },
+    "ponytail-debt": {
+      "source": "DietrichGebert/ponytail",
+      "sourceType": "github",
+      "skillPath": "skills/ponytail-debt/SKILL.md",
+      "computedHash": "0099b82174e3a4261828b4ec04d2c068b1b294fdab14f76701c2acd1f7c99539"
+    },
+    "ponytail-gain": {
+      "source": "DietrichGebert/ponytail",
+      "sourceType": "github",
+      "skillPath": "skills/ponytail-gain/SKILL.md",
+      "computedHash": "c45ecba7906960eea904218b623abf097ebff84ecbacca6d68da1d0687435f75"
+    },
+    "ponytail-help": {
+      "source": "DietrichGebert/ponytail",
+      "sourceType": "github",
+      "skillPath": "skills/ponytail-help/SKILL.md",
+      "computedHash": "10e8382b1033c9a0fec0073de6d3de3846b4f5dca7d78b6df2d476a1f4cd43c6"
+    },
+    "ponytail-review": {
+      "source": "DietrichGebert/ponytail",
+      "sourceType": "github",
+      "skillPath": "skills/ponytail-review/SKILL.md",
+      "computedHash": "4646594fcd75455533f7ff1425f4f1c5ba0fa65f88241bf262b1c4fc275f049a"
     },
     "popups": {
       "source": "coreyhaines31/marketingskills",
@@ -23653,6 +23755,12 @@
       "skillPath": "shared/smart-categorize/SKILL.md",
       "computedHash": "256638cc1347c42058b13eef55cef129fb36bca91c499ac5b4a85e79ddae5ba8"
     },
+    "smart-explore": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/smart-explore/SKILL.md",
+      "computedHash": "9a1725dd93477d0b1c698f3b47734dc10491c6edeb89cb728d2f33ab4ac35fce"
+    },
     "smart-split": {
       "source": "openaccountant/skills",
       "sourceType": "github",
@@ -25309,6 +25417,12 @@
       "skillPath": "skills/12-data-analytics/time-series-decomposer/SKILL.md",
       "computedHash": "14b288e921f9fda50aa32a077041d0461c811296f4d6d6e6d780224aa8b2f5ab"
     },
+    "timeline-report": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/timeline-report/SKILL.md",
+      "computedHash": "b2194d39219a5baa62b5f9373b1cc04b8020ddebed8496d2eb7da9a729fbc99c"
+    },
     "timeout-handler": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
       "sourceType": "github",
@@ -26683,6 +26797,12 @@
       "skillPath": ".qwen/skills/verify-pr/SKILL.md",
       "computedHash": "b21f1345b8e88ef0a4717e8407b0e44c8b5a042af45d2ce673023933622bb3df"
     },
+    "version-bump": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/version-bump/SKILL.md",
+      "computedHash": "ff2b16d823f09e2252753a4103385870c0e7f9fbfd744d6f6004a9ff0904c4ae"
+    },
     "version-bumper": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
       "sourceType": "github",
@@ -27235,6 +27355,12 @@
       "skillPath": "skills/06-backend-dev/websocket-handler-setup/SKILL.md",
       "computedHash": "66a3328b504499509a3586845d021e100440ec45b7fce16109c5ba38397d8d30"
     },
+    "weekly-digests": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/weekly-digests/SKILL.md",
+      "computedHash": "792aebfb3752084374353c5f176356ff808c7298caf963a5f930a4977a04d154"
+    },
     "weekly-prep-brief": {
       "source": "anthropics/knowledge-work-plugins",
       "sourceType": "github",
@@ -27246,6 +27372,12 @@
       "sourceType": "github",
       "skillPath": "skills/what-if-oracle/SKILL.md",
       "computedHash": "7a236f54c178c1f3ee330bc5a60187f4ae881d0c27083f40628a9a61ec8f2d65"
+    },
+    "what-the": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/what-the/SKILL.md",
+      "computedHash": "89d95f90e4299972cec11765a2db44dd4cb60c8c9f10b58eebfbcb1eec7aaf41"
     },
     "window-function-generator": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
@@ -27864,6 +27996,12 @@
       "sourceType": "github",
       "skillPath": "working-with-legacy-code/SKILL.md",
       "computedHash": "df7edc19123ea872066f2421592cc6ed08f8cefb8e6d34d154703840975c3b91"
+    },
+    "wowerpoint": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/wowerpoint/SKILL.md",
+      "computedHash": "230ee1e1754b2a36f2a4b945d74f66efca6a1d1901174bf500f72cf407cdeb3b"
     },
     "write-query": {
       "source": "anthropics/knowledge-work-plugins",
