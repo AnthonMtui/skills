@@ -28296,6 +28296,12 @@
       "sourceType": "github",
       "skillPath": "skills/05-frontend-dev/zustand-store-creator/SKILL.md",
       "computedHash": "901b9e11d8c4b95e6c5a707dec61509d3f0ca780a6a42946d8a3cb053b7d116f"
+    },
+    "graphify": {
+      "source": "Graphify-Labs/graphify",
+      "sourceType": "github",
+      "skillPath": "graphify/skill.md",
+      "computedHash": "b5c95cae5ba665056fa8632b827c895f3bb32878c03c9a3963a8e045993f408c"
     }
   }
 }
