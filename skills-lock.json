@@ -7861,6 +7861,12 @@
       "skillPath": ".qwen/skills/deflake/SKILL.md",
       "computedHash": "f367475ca3369cd4dfb55c01f2c51e6c6a93433769d9a4dfd6746353bb60a070"
     },
+    "defuddle": {
+      "source": "kepano/obsidian-skills",
+      "sourceType": "github",
+      "skillPath": "skills/defuddle/SKILL.md",
+      "computedHash": "0ed68bc3e818ba0e6b8d192357ea3daaf552a3893f8854e7fd43c06831f91323"
+    },
     "delegate-issue": {
       "source": "Agent-Field/SWE-AF",
       "sourceType": "github",
@@ -14905,6 +14911,12 @@
       "skillPath": "skills/17-technical-docs/jsdoc-comment-generator/SKILL.md",
       "computedHash": "ae77389f8e16467e1233a7e808533fbbad42c6bf49b8264f8c243e6f09a3dd0e"
     },
+    "json-canvas": {
+      "source": "kepano/obsidian-skills",
+      "sourceType": "github",
+      "skillPath": "skills/json-canvas/SKILL.md",
+      "computedHash": "56cbac74a93e4fba97f4d44bccfdeaae89e545b223f47df392c7705e01e6c543"
+    },
     "json-config-manager": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
       "sourceType": "github",
@@ -18931,11 +18943,23 @@
       "skillPath": "skills/03-security-fundamentals/oauth2-flow-helper/SKILL.md",
       "computedHash": "092b92a70a8793f906df137841603bc3c5377afa3cbbc70441b62af208048e28"
     },
+    "obsidian-bases": {
+      "source": "kepano/obsidian-skills",
+      "sourceType": "github",
+      "skillPath": "skills/obsidian-bases/SKILL.md",
+      "computedHash": "65db029661f38daadc8b8eb755bd7b96011336f49bdc11e966ec7fd157d8f125"
+    },
     "obsidian-ci-integration": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
       "sourceType": "github",
       "skillPath": "skills/.curated/obsidian-ci-integration/SKILL.md",
       "computedHash": "39ed17c8447e33c28c5298ca86dc87a90319e42fc15ef8a4a14bb785637b5b8d"
+    },
+    "obsidian-cli": {
+      "source": "kepano/obsidian-skills",
+      "sourceType": "github",
+      "skillPath": "skills/obsidian-cli/SKILL.md",
+      "computedHash": "f46ae626875f7e47c410c2ee93896c4526024ebe127719e8fb430261b5677edc"
     },
     "obsidian-common-errors": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
@@ -19008,6 +19032,12 @@
       "sourceType": "github",
       "skillPath": "skills/.curated/obsidian-local-dev-loop/SKILL.md",
       "computedHash": "3b58e52a7e77a5c9c67b1a1cfc3be078cdd6481a9bb73969cb8b6ecb6803d010"
+    },
+    "obsidian-markdown": {
+      "source": "kepano/obsidian-skills",
+      "sourceType": "github",
+      "skillPath": "skills/obsidian-markdown/SKILL.md",
+      "computedHash": "0f47297035d7824e7bf0f1984e8145a59a123e2258b5d54c9ac9642f9f77e177"
     },
     "obsidian-migration-deep-dive": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
