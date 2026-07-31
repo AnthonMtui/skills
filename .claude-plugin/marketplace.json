@@ -43,6 +43,20 @@
       "repository": "https://github.com/thedotmack/claude-mem",
       "license": "Apache-2.0",
       "keywords": ["claude", "claude-code", "mcp", "plugin", "memory", "compression", "knowledge-graph"]
+    },
+    {
+      "name": "ecc",
+      "source": "./plugins/ecc",
+      "description": "Harness-native ECC plugin for engineering teams - agents, skills, legacy command shims, reusable hooks, rules, MCP conventions, and operator workflows for Claude Code plus adjacent agent harnesses.",
+      "version": "2.1.0",
+      "author": {
+        "name": "Affaan Mustafa",
+        "url": "https://x.com/affaanmustafa"
+      },
+      "homepage": "https://ecc.tools",
+      "repository": "https://github.com/affaan-m/ECC",
+      "license": "MIT",
+      "keywords": ["claude-code", "agents", "skills", "hooks", "rules", "tdd", "code-review", "security", "workflow", "automation", "best-practices"]
     }
   ]
 }
