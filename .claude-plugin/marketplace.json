@@ -70,6 +70,16 @@
       "repository": "https://github.com/kepano/obsidian-skills",
       "license": "MIT",
       "keywords": ["obsidian", "markdown", "bases", "canvas", "pkm", "notes"]
+    },
+    {
+      "name": "code-review",
+      "source": "./plugins/code-review",
+      "description": "Automated code review for pull requests using multiple specialized agents with confidence-based scoring.",
+      "author": {
+        "name": "Anthropic",
+        "email": "support@anthropic.com"
+      },
+      "repository": "https://github.com/anthropics/claude-plugins-official"
     }
   ]
 }
