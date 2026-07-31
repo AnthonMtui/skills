@@ -18727,6 +18727,12 @@
       "skillPath": "skills/.curated/openrouter-usage-analytics/SKILL.md",
       "computedHash": "ede4d2cb0081bf610403d22c8be222f75aa28067986ee72015ddcf84ad523ff8"
     },
+    "openship-config": {
+      "source": "oblien/openship",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/openship-config/SKILL.md",
+      "computedHash": "9b1d3db955a5073f40dbf682d5dcf1933120bd8011e6196d2a8b671e79d464d6"
+    },
     "opentargets-database": {
       "source": "pur3v4d3r/pur3-pkb-codebase",
       "sourceType": "github",
