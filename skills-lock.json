@@ -247,6 +247,12 @@
       "skillPath": ".agents/skills/add-new-model/SKILL.md",
       "computedHash": "110b58694cad71a7cc6594723c3c20c638d5ff017e5a63054ef282a9346f0792"
     },
+    "add-tts-engine": {
+      "source": "jamiepine/voicebox",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/add-tts-engine/SKILL.md",
+      "computedHash": "23162ac2f85dc871771d3d240e63a375572b0097f269824c84d13eea6280e84d"
+    },
     "adding-a-provider-api-feature": {
       "source": "pydantic/pydantic-ai",
       "sourceType": "github",
@@ -2952,6 +2958,12 @@
       "sourceType": "github",
       "skillPath": "partner-built/brand-voice/skills/brand-voice-enforcement/SKILL.md",
       "computedHash": "8269b6edf6ff2fd889707fc017b4f552d5bb39c2a5b6a0a17dc68e28577832ac"
+    },
+    "brandkit": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/brandkit/SKILL.md",
+      "computedHash": "b63012f3c3d21197e0185d3e9cc7ec40c589fb10e0b5a32a561739de31aa3f20"
     },
     "break-even-calc": {
       "source": "openaccountant/skills",
@@ -7681,6 +7693,18 @@
       "skillPath": "design-systems/skills/design-system-governance/SKILL.md",
       "computedHash": "9ff33c8a07cf03e1dfd6122b641b132d1903a86f78a7846ace1aa569a27d1b57"
     },
+    "design-taste-frontend": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/taste-skill/SKILL.md",
+      "computedHash": "6d838b246d0e35d0b53f4f23f98ba7a1dd561937e64f7d0c7553b0928e376c3e"
+    },
+    "design-taste-frontend-v1": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/taste-skill-v1/SKILL.md",
+      "computedHash": "d704ab912c4d0ca954ffa858983da755ae4cd5cad9ba22554db5557382f5bd34"
+    },
     "design-token": {
       "source": "Owl-Listener/designer-skills",
       "sourceType": "github",
@@ -8268,6 +8292,12 @@
       "sourceType": "github",
       "skillPath": "plugins/ai-agency/tonone/skills/draft-recon/SKILL.md",
       "computedHash": "353f83ef599d63ab29df33283295b3269a3b06a37969b1e7e217ab4cb9f93c1a"
+    },
+    "draft-release-notes": {
+      "source": "jamiepine/voicebox",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/draft-release-notes/SKILL.md",
+      "computedHash": "02214c2a08db876975f9a890fc92bf2d8c4f6e5d35032a21faec37fe20a4ce54"
     },
     "draft-response": {
       "source": "anthropics/knowledge-work-plugins",
@@ -11029,6 +11059,12 @@
       "skillPath": "plugins/vertical-plugins/investment-banking/skills/strip-profile/SKILL.md",
       "computedHash": "1a0b1b4492de09c99cd2dae6ea3fd86074430781b066ae8f40e57cf1e361fc4b"
     },
+    "full-output-enforcement": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/output-skill/SKILL.md",
+      "computedHash": "26bd29ce4c5e02c7666b2d503609bf466bd32290822e91f0e984147048dbb924"
+    },
     "funding-digest": {
       "source": "anthropics/financial-services-plugins",
       "sourceType": "github",
@@ -11802,6 +11838,12 @@
       "sourceType": "github",
       "skillPath": "skills/20-enterprise-workflows/governance-checklist-generator/SKILL.md",
       "computedHash": "adc8d929ff5b254a2c0c6dac2f5162a78cbabd937fc3b873f5e2ab2c4fa0f3b6"
+    },
+    "gpt-taste": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/gpt-tasteskill/SKILL.md",
+      "computedHash": "cc8f0c601d8240a124e1d11634351a2be7b8a72fd807c75e5b6bf7afcd5ddee0"
     },
     "gpu-resource-optimizer": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
@@ -12685,6 +12727,12 @@
       "skillPath": "interaction-design/skills/hicks-law/SKILL.md",
       "computedHash": "2f891c2d624466bfe9314435c604b3e2ddab1991b146957d712f72dbb1fcb563"
     },
+    "high-end-visual-design": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/soft-skill/SKILL.md",
+      "computedHash": "7db385e4c5370e5a7fca9704a1361b056e4504ea6a03924bb86f33a4f00b5c73"
+    },
     "high-output-management": {
       "source": "wondelai/skills",
       "sourceType": "github",
@@ -13213,11 +13261,29 @@
       "skillPath": "skills/05-frontend-dev/image-optimization-helper/SKILL.md",
       "computedHash": "dee8504d30d55912ae206cfd3256bd692dfa7896bf7edf1e89804d67e8c47fd1"
     },
+    "image-to-code": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/image-to-code-skill/SKILL.md",
+      "computedHash": "58517b03b2a01f4c9ba65861559d03df931400871bbc200978c975b24bb92c73"
+    },
     "imagegen": {
       "source": "openai/skills",
       "sourceType": "github",
       "skillPath": "skills/.system/imagegen/SKILL.md",
       "computedHash": "9f14832d6538d83047ef41223ba9b0fb4a8c393d144ad4015ce4c10cc3d5414c"
+    },
+    "imagegen-frontend-mobile": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/imagegen-frontend-mobile/SKILL.md",
+      "computedHash": "9ab7f4f6ce66a3cff02bbf5894e5bd5af50bf5d6ef0adffdc88e8fab772fe44f"
+    },
+    "imagegen-frontend-web": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/imagegen-frontend-web/SKILL.md",
+      "computedHash": "65f5ae59fa317567809438310b1c54f78cd133426deb43e4d3d4ca4c8f541628"
     },
     "imaging-data-commons": {
       "source": "K-Dense-AI/scientific-agent-skills",
@@ -13332,6 +13398,12 @@
       "sourceType": "github",
       "skillPath": "skills/11-data-pipelines/incremental-load-setup/SKILL.md",
       "computedHash": "6efc19250ef5bb80e4229af137ad20fe950eb619b7768fb7f42e0c02225b14cc"
+    },
+    "industrial-brutalist-ui": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/brutalist-skill/SKILL.md",
+      "computedHash": "8fc355c4aadb7d29c53ca28bc41be3cd6eea765d121e3737c4dc2d0f90a8effa"
     },
     "inference-latency-profiler": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
@@ -16662,6 +16734,12 @@
       "sourceType": "github",
       "skillPath": "plugins/saas-packs/mindtickle-pack/skills/mindtickle-webhooks-events/SKILL.md",
       "computedHash": "6c902f13c670ab31ae1a68df74a3cfa474b7bcf62d7647d4be7d099f4d039eb4"
+    },
+    "minimalist-ui": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/minimalist-skill/SKILL.md",
+      "computedHash": "08873a3131d3be27bef9bf3304b310b16b44ca6e3561aebe532797be3443f6bd"
     },
     "miro-ci-integration": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
@@ -21415,6 +21493,12 @@
       "skillPath": "human-resources/skills/recruiting-pipeline/SKILL.md",
       "computedHash": "42e9ce796753be359cb513676d567a0029d793ca5b6a12080d29d947b1f5f9fd"
     },
+    "redesign-existing-projects": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/redesign-skill/SKILL.md",
+      "computedHash": "b405eee0e0e80fc243f731d9aa368bca307e356db7e6157d27101d369dac6726"
+    },
     "redis-cache-manager": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
       "sourceType": "github",
@@ -21504,6 +21588,12 @@
       "sourceType": "github",
       "skillPath": "claude/dev-tools/skills/release-python-package/SKILL.md",
       "computedHash": "8fa860cf4d51601a8496f30eac8156c68ebdc6a28b6e192806113578dcde287c"
+    },
+    "release-bump": {
+      "source": "jamiepine/voicebox",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/release-bump/SKILL.md",
+      "computedHash": "73dc25463478336f5884ad37ef44682abfff920d7e622a006e5b47bc0e2aa536"
     },
     "release-it": {
       "source": "wondelai/skills",
@@ -24835,6 +24925,12 @@
       "skillPath": "plugins/ai-agency/hyperflow/skills/sticky/SKILL.md",
       "computedHash": "a8d94885dedac46dc0ebb2a10afb3117fa2f805df55e439a4616f5da0bd5cb09"
     },
+    "stitch-design-taste": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/stitch-skill/SKILL.md",
+      "computedHash": "13322f38406cd3abf16ba45e35bdc9b18002d0153a79b4612b97aefc65d5a335"
+    },
     "storybrand-messaging": {
       "source": "wondelai/skills",
       "sourceType": "github",
@@ -26046,6 +26142,12 @@
       "sourceType": "github",
       "skillPath": "legal/skills/triage-nda/SKILL.md",
       "computedHash": "35d04506fd26639d9507e3790f52366a4dd62eed23bf48d98cd3c717e62f192c"
+    },
+    "triage-prs": {
+      "source": "jamiepine/voicebox",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/triage-prs/SKILL.md",
+      "computedHash": "61cb19759f131691d8078309a4dc8549d935667a6b34331c254614c8ab14ee35"
     },
     "triton-inference-config": {
       "source": "jeremylongshore/claude-code-plugins-plus-skills",
