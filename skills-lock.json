@@ -565,6 +565,12 @@
       "skillPath": "skills/agent-payment-x402/SKILL.md",
       "computedHash": "c1ca7da6865a5f665bfdc1880406f05406552ef670a31cba3ea09f5efe564fa2"
     },
+    "agent-reach": {
+      "source": "Panniantong/Agent-Reach",
+      "sourceType": "github",
+      "skillPath": "agent_reach/skill/SKILL.md",
+      "computedHash": "b3e4a7e1f0bf5b82fc7a88a61bbf0f9b0a3a2bb7aa0b4f3f65a29669cb8e717a"
+    },
     "agent-reproduce-align": {
       "source": "QwenLM/qwen-code",
       "sourceType": "github",
